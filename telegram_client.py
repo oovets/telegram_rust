@@ -777,7 +777,7 @@ class TelegramApp(App):
         if not self.client:
             return
         try:
-            dialogs = await self.client.get_dialogs(limit=100)
+            dialogs = await self.client.get_dialogs(limit=200)
             self.chats.clear()
             for dialog in dialogs:
                 entity = dialog.entity
@@ -1196,7 +1196,7 @@ class TelegramApp(App):
         return "Unknown"
 
     async def _load_and_resolve(self, entity, chat_id: int):
-        messages = await self.client.get_messages(entity, limit=50)
+        messages = await self.client.get_messages(entity, limit=100)
 
         # Get pinned message if any
         pinned_msg = None
@@ -1839,7 +1839,7 @@ class TelegramApp(App):
                 # Search in message history
                 messages = await self.client.get_messages(
                     entity,
-                    limit=50,
+                    limit=None,
                     search=query
                 )
 

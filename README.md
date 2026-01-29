@@ -107,9 +107,9 @@ python telegram_client.py
 - **Textual**: Modern TUI framework for Python
 - **Asyncio**: For asynchronous communication with Telegram servers
 
-## Current Limitations
+## Default Settings
 
-- Limited to 100 conversations and 50 message history per conversation
+- Shows up to 200 conversations and 100 messages per conversation (configurable in code)
 
 ## Future Improvements
 
