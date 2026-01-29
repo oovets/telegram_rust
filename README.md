@@ -9,6 +9,7 @@ A terminal/TUI client for Telegram built with Python, Textual and Telethon.
 - Media download and viewing (photos, videos, documents, etc.)
 - Two-factor authentication support
 - Layout persistence (remembers your splits and open chats)
+- Settings persistence (remembers your toggle preferences)
 - URL shortening for long links
 - Message reactions display
 - YouTube and Spotify link detection with title preview
@@ -58,21 +59,22 @@ python telegram_client.py
 | `Ctrl+V` | Split vertically (side by side) |
 | `Ctrl+B` | Split horizontally (stacked) |
 | `Ctrl+W` | Close current pane |
-| `Tab` | Cycle between panes |
+| `Tab` | Cycle between panes / autocomplete commands |
+| `Up/Down` | Browse input history |
 | `Ctrl+R` | Refresh conversations |
 | `Ctrl+L` | Clear current pane |
-| `Ctrl+E` | Toggle reactions on/off |
+| `Ctrl+E` | Toggle reactions display |
 | `Ctrl+N` | Toggle desktop notifications |
 | `Ctrl+D` | Toggle compact mode (spacing between messages) |
-| `Ctrl+O` | Toggle emojis on/off |
-| `Ctrl+Q` | Quit (saves layout) |
-| `Tab` | Autocomplete commands (when typing /) |
+| `Ctrl+O` | Toggle emojis display |
+| `Ctrl+G` | Toggle message line numbers |
+| `Ctrl+Q` | Quit (saves layout and settings) |
 
 ## Commands
 
 | Command | Description |
 |---------|-------------|
-| `/reply N` | Reply to message #N |
+| `/reply N [text]` | Reply to message #N (inline text optional) |
 | `/media N` or `/m N` | Download and open media from message #N |
 | `/edit N text` or `/e N text` | Edit your message #N with new text |
 | `/delete N` or `/del N` or `/d N` | Delete your message #N |
@@ -92,7 +94,7 @@ python telegram_client.py
 
 | File | Description |
 |------|-------------|
-| `telegram_config.json` | API credentials (saved automatically) |
+| `telegram_config.json` | API credentials and settings (saved automatically) |
 | `telegram_session.session` | Session data (no need to log in every time) |
 | `telegram_layout.json` | Window layout and open chats (saved on quit) |
 | `telegram_aliases.json` | User display name aliases |

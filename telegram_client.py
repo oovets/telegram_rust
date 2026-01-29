@@ -22,7 +22,10 @@ __version__ = "1.0.0"
 import asyncio
 import json
 import os
+import platform
 import re
+import subprocess
+import tempfile
 import threading
 import urllib.parse
 import urllib.request
@@ -36,10 +39,12 @@ from textual.message import Message
 from textual.widgets import Header, Input, ListItem, ListView, Static
 
 from telethon import TelegramClient, events
-from telethon.tl.types import Channel, Chat, User
+from telethon.tl.types import (
+    Channel, Chat, ChatBannedRights, User,
+    UserStatusOnline, UserStatusOffline, UserStatusRecently
+)
 from telethon.tl.functions.messages import CreateChatRequest, AddChatUserRequest
 from telethon.tl.functions.channels import InviteToChannelRequest, EditBannedRequest
-from telethon.tl.types import ChatBannedRights
 
 # Configuration
 DEBUG_MODE = os.environ.get("TELEGRAM_DEBUG", "").lower() in ("1", "true", "yes")
@@ -447,6 +452,7 @@ class TelegramApp(App):
         Binding("ctrl+n", "toggle_notifications", "Toggle notifications", priority=True),
         Binding("ctrl+d", "toggle_compact", "Toggle compact mode", priority=True),
         Binding("ctrl+o", "toggle_emojis", "Toggle emojis", priority=True),
+        Binding("ctrl+g", "toggle_line_numbers", "Toggle line numbers", priority=True),
     ]
 
     TITLE = "Telegram Terminal Client"
@@ -499,10 +505,16 @@ class TelegramApp(App):
         self.desktop_notifications: bool = True  # Toggle for desktop notifications
         self.compact_mode: bool = True  # Toggle for compact message display
         self.show_emojis: bool = True  # Toggle for showing emojis
+        self.show_line_numbers: bool = True  # Toggle for showing message numbers
 
         self.panes: list = []
         self.active_pane: Optional[ChatPane] = None
         self.saved_layout: Optional[dict] = None
+
+        # Message input history
+        self.input_history: List[str] = []
+        self.history_index: int = -1
+        self.history_temp: str = ""  # Temporary storage for current input
 
         self.load_config()
         self.load_layout()
@@ -515,13 +527,27 @@ class TelegramApp(App):
                     config = json.load(f)
                     self.api_id = config.get('api_id')
                     self.api_hash = config.get('api_hash')
+                    # Load toggle settings
+                    self.show_reactions = config.get('show_reactions', True)
+                    self.desktop_notifications = config.get('desktop_notifications', True)
+                    self.compact_mode = config.get('compact_mode', True)
+                    self.show_emojis = config.get('show_emojis', True)
+                    self.show_line_numbers = config.get('show_line_numbers', True)
             except Exception:
                 pass
 
     def save_config(self):
         try:
             with open(self.config_file, 'w') as f:
-                json.dump({'api_id': self.api_id, 'api_hash': self.api_hash}, f)
+                json.dump({
+                    'api_id': self.api_id,
+                    'api_hash': self.api_hash,
+                    'show_reactions': self.show_reactions,
+                    'desktop_notifications': self.desktop_notifications,
+                    'compact_mode': self.compact_mode,
+                    'show_emojis': self.show_emojis,
+                    'show_line_numbers': self.show_line_numbers,
+                }, f)
         except Exception:
             pass
 
@@ -1076,14 +1102,12 @@ class TelegramApp(App):
             lines.append(f"[bold magenta]{filter_info}[/bold magenta]")
             lines.append("")
 
-        filtered_count = 0
         for idx, item in enumerate(msg_data):
             msg, sender_name, is_out = item[0], item[1], item[2]
             reply_info = item[3] if len(item) > 3 else None
 
             # Apply filter
             if not self._message_matches_filter(msg, sender_name, pane):
-                filtered_count += 1
                 continue
 
             # Show unread marker before unread messages
@@ -1099,7 +1123,14 @@ class TelegramApp(App):
             timestamp = msg.date.strftime("%H:%M")
             safe_name = sender_name.replace("[", "\\[")
             num_str = f"#{idx + 1}"
-            prefix_len = len(num_str) + 1 + len(timestamp) + 1 + len(sender_name) + 2
+            
+            # Build line number prefix (optional)
+            if self.show_line_numbers:
+                num_prefix = f"[dim]{num_str}[/dim] "
+                prefix_len = len(num_str) + 1 + len(timestamp) + 1 + len(sender_name) + 2
+            else:
+                num_prefix = ""
+                prefix_len = len(timestamp) + 1 + len(sender_name) + 2
 
             # Escape and wrap the message text (not the media label)
             if text:
@@ -1128,40 +1159,15 @@ class TelegramApp(App):
                 lines.append(f"[dim italic]> {safe_reply_sender}: {safe_reply_text}[/dim italic]")
                 reply_arrow = "[dim]^[/dim] "  # Arrow pointing up to the quoted text
 
-            num = f"[dim]{num_str}[/dim] "
-
             # Get reactions for this message (if enabled)
             reactions = self._format_reactions(msg) if self.show_reactions else ""
+            reactions_suffix = f" [dim]{reactions}[/dim]" if reactions else ""
 
+            # Build message line with number on the left
             if is_out:
-                msg_line = f"{num}[dim]{timestamp}[/dim] {reply_arrow}[bold green]{safe_name}[/bold green]: {wrapped}"
+                msg_line = f"{num_prefix}[dim]{timestamp}[/dim] {reply_arrow}[bold green]{safe_name}[/bold green]: {wrapped}{reactions_suffix}"
             else:
-                msg_line = f"{num}[dim]{timestamp}[/dim] {reply_arrow}[bold cyan]{safe_name}[/bold cyan]: {wrapped}"
-
-            # Add reactions right-aligned if present
-            if reactions:
-                # Calculate visible length (without markup)
-                # Get the first line only for padding calculation
-                first_line = msg_line.split("\n")[0] if "\n" in msg_line else msg_line
-                # Rough estimate of visible chars (strip markup)
-                import re
-                visible_text = re.sub(r'\[/?[^\]]+\]', '', first_line)
-                visible_len = len(visible_text)
-                reactions_len = len(reactions) + 2  # +2 for brackets
-
-                # If there's room, add reactions on the same line
-                if visible_len + reactions_len + 2 < width:
-                    padding = width - visible_len - reactions_len
-                    if "\n" in msg_line:
-                        # Multi-line: add reactions to first line
-                        parts = msg_line.split("\n", 1)
-                        msg_line = f"{parts[0]}{' ' * padding}[dim]{reactions}[/dim]\n{parts[1]}"
-                    else:
-                        msg_line = f"{msg_line}{' ' * padding}[dim]{reactions}[/dim]"
-                else:
-                    # Not enough room, add on next line right-aligned
-                    padding = width - reactions_len
-                    msg_line = f"{msg_line}\n{' ' * padding}[dim]{reactions}[/dim]"
+                msg_line = f"{num_prefix}[dim]{timestamp}[/dim] {reply_arrow}[bold cyan]{safe_name}[/bold cyan]: {wrapped}{reactions_suffix}"
 
             lines.append(msg_line)
 
@@ -1231,7 +1237,6 @@ class TelegramApp(App):
                 if entity.bot:
                     online_status = "bot"
                 elif hasattr(entity, 'status'):
-                    from telethon.tl.types import UserStatusOnline, UserStatusOffline, UserStatusRecently
                     status = entity.status
                     if isinstance(status, UserStatusOnline):
                         online_status = "green]online[/green"
@@ -1239,7 +1244,6 @@ class TelegramApp(App):
                         online_status = "yellow]recently[/yellow"
                     elif isinstance(status, UserStatusOffline):
                         if hasattr(status, 'was_online'):
-                            from datetime import datetime
                             diff = datetime.now(status.was_online.tzinfo) - status.was_online
                             if diff.days > 0:
                                 online_status = f"dim]last seen {diff.days}d ago[/dim"
@@ -1318,6 +1322,16 @@ class TelegramApp(App):
         text = event.value.strip()
         if not text:
             return
+
+        # Save to input history (don't save duplicates)
+        if not self.input_history or self.input_history[-1] != text:
+            self.input_history.append(text)
+            # Keep max 100 entries
+            if len(self.input_history) > 100:
+                self.input_history.pop(0)
+        # Reset history navigation
+        self.history_index = -1
+        self.history_temp = ""
 
         if text.startswith("/reply "):
             self._handle_reply_command(text, pane)
@@ -1405,7 +1419,41 @@ class TelegramApp(App):
             self._set_active_pane(pane)
 
     def on_key(self, event) -> None:
-        """Handle key events for autocomplete and Tab navigation."""
+        """Handle key events for autocomplete, history, and Tab navigation."""
+        # Handle arrow up/down for input history
+        if event.key in ("up", "down"):
+            if self.active_pane:
+                inp = self.active_pane.get_input()
+                if inp and inp.has_focus and self.input_history:
+                    if event.key == "up":
+                        if self.history_index == -1:
+                            # Save current input before browsing history
+                            self.history_temp = inp.value
+                            self.history_index = len(self.input_history) - 1
+                        elif self.history_index > 0:
+                            self.history_index -= 1
+                        
+                        if self.history_index >= 0:
+                            inp.value = self.input_history[self.history_index]
+                            inp.cursor_position = len(inp.value)
+                        event.prevent_default()
+                        event.stop()
+                        return
+                    
+                    elif event.key == "down":
+                        if self.history_index >= 0:
+                            self.history_index += 1
+                            if self.history_index >= len(self.input_history):
+                                # Back to current input
+                                self.history_index = -1
+                                inp.value = self.history_temp
+                            else:
+                                inp.value = self.input_history[self.history_index]
+                            inp.cursor_position = len(inp.value)
+                            event.prevent_default()
+                            event.stop()
+                            return
+
         if event.key != "tab":
             return
 
@@ -1490,27 +1538,41 @@ class TelegramApp(App):
         self.call_later(redraw_panes, 0.1)
 
     def _handle_reply_command(self, text: str, pane: ChatPane):
-        parts = text.split(maxsplit=1)
+        # Parse: /reply N or /reply N message text
+        parts = text.split(maxsplit=2)
         if len(parts) < 2:
-            self.notify("Usage: /reply N", severity="warning")
+            self.notify("Usage: /reply N [message]", severity="warning")
             return
+        
         try:
-            num = int(parts[1])
+            # Strip # prefix if present
+            num_str = parts[1].lstrip('#')
+            num = int(num_str)
         except ValueError:
-            self.notify("Usage: /reply N (where N is the message number)", severity="warning")
+            self.notify("Usage: /reply N [message]", severity="warning")
             return
 
         if not pane.msg_data:
             self.notify("No messages loaded", severity="warning")
             return
 
-        text_msgs = [(i, item[0]) for i, item in enumerate(pane.msg_data) if item[0].text]
-        if num < 1 or num > len(text_msgs):
-            self.notify(f"Message #{num} not found (1-{len(text_msgs)})", severity="warning")
+        if num < 1 or num > len(pane.msg_data):
+            self.notify(f"Message #{num} not found (1-{len(pane.msg_data)})", severity="warning")
             return
 
-        idx, msg = text_msgs[num - 1]
-        sender_name = pane.msg_data[idx][1]
+        msg = pane.msg_data[num - 1][0]
+        sender_name = pane.msg_data[num - 1][1]
+
+        # Check if there's an inline message to send immediately
+        if len(parts) >= 3 and parts[2].strip():
+            reply_text = parts[2].strip()
+            pane.reply_to_message = msg.id
+            self._send_message(reply_text, pane)
+            pane.reply_to_message = None
+            pane.hide_reply_preview()
+            return
+
+        # No inline message - enter reply mode
         pane.reply_to_message = msg.id
         preview = msg.text[:50] if msg.text else "[Media]"
         if len(msg.text or "") > 50:
@@ -1528,7 +1590,8 @@ class TelegramApp(App):
             self.notify("Usage: /media N or /m N", severity="warning")
             return
         try:
-            num = int(parts[1])
+            num_str = parts[1].lstrip('#')
+            num = int(num_str)
         except ValueError:
             self.notify("Usage: /media N (where N is the message number)", severity="warning")
             return
@@ -1557,7 +1620,8 @@ class TelegramApp(App):
             return
 
         try:
-            num = int(parts[1])
+            num_str = parts[1].lstrip('#')
+            num = int(num_str)
         except ValueError:
             self.notify("Usage: /edit N new_text", severity="warning")
             return
@@ -1615,7 +1679,8 @@ class TelegramApp(App):
             return
 
         try:
-            num = int(parts[1])
+            num_str = parts[1].lstrip('#')
+            num = int(num_str)
         except ValueError:
             self.notify("Usage: /alias N name", severity="warning")
             return
@@ -1677,7 +1742,8 @@ class TelegramApp(App):
             return
 
         try:
-            num = int(parts[1])
+            num_str = parts[1].lstrip('#')
+            num = int(num_str)
         except ValueError:
             self.notify("Usage: /unalias N", severity="warning")
             return
@@ -2216,7 +2282,8 @@ class TelegramApp(App):
             return
 
         try:
-            num = int(parts[1])
+            num_str = parts[1].lstrip('#')
+            num = int(num_str)
         except ValueError:
             self.notify("Usage: /forward N @username (N is message number)", severity="warning")
             return
@@ -2269,7 +2336,8 @@ class TelegramApp(App):
             return
 
         try:
-            num = int(parts[1])
+            num_str = parts[1].lstrip('#')
+            num = int(num_str)
         except ValueError:
             self.notify("Usage: /delete N (where N is the message number)", severity="warning")
             return
@@ -2318,10 +2386,6 @@ class TelegramApp(App):
         if not self.client or not self.telegram_loop:
             self.notify("Telegram connection not ready", severity="error")
             return
-
-        import tempfile
-        import subprocess
-        import platform
 
         async def _download():
             try:
@@ -2613,6 +2677,16 @@ class TelegramApp(App):
             if pane.chat_id and pane.msg_data:
                 pane.set_messages(self._format_messages(pane.msg_data, pane))
 
+    def action_toggle_line_numbers(self):
+        """Toggle message line numbers."""
+        self.show_line_numbers = not self.show_line_numbers
+        status = "ON" if self.show_line_numbers else "OFF"
+        self.notify(f"Line numbers: {status}", severity="info")
+        # Refresh all panes to apply the change
+        for pane in self.panes:
+            if pane.chat_id and pane.msg_data:
+                pane.set_messages(self._format_messages(pane.msg_data, pane))
+
     def _strip_emojis(self, text: str) -> str:
         """Remove emojis from text."""
         # Emoji unicode ranges
@@ -2641,9 +2715,6 @@ class TelegramApp(App):
         if not self.desktop_notifications:
             return
 
-        import subprocess
-        import platform
-
         try:
             system = platform.system()
             if system == "Darwin":  # macOS
@@ -2660,6 +2731,7 @@ class TelegramApp(App):
 
     async def action_quit(self):
         self.save_layout()
+        self.save_config()
         if self.client:
             await self.client.disconnect()
         self.exit()
