@@ -1040,7 +1040,11 @@ class TelegramApp(App):
         elif msg.poll:
             poll_question = ""
             if hasattr(msg.poll, 'poll') and hasattr(msg.poll.poll, 'question'):
-                poll_question = msg.poll.poll.question[:30].replace("[", "\\[")
+                q = msg.poll.poll.question
+                # Handle TextWithEntities object
+                if hasattr(q, 'text'):
+                    q = q.text
+                poll_question = str(q)[:30].replace("[", "\\[")
             if poll_question:
                 return f"[bold yellow]\\[Poll: {poll_question}][/bold yellow]"
             return "[bold yellow]\\[Poll][/bold yellow]"
