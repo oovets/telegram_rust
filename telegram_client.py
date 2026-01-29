@@ -37,6 +37,7 @@ from textual.widgets import Header, Input, ListItem, ListView, Static
 
 from telethon import TelegramClient, events
 from telethon.tl.types import Channel, Chat, User
+from telethon.tl.functions.messages import CreateChatRequest
 
 # Configuration
 DEBUG_MODE = os.environ.get("TELEGRAM_DEBUG", "").lower() in ("1", "true", "yes")
@@ -246,6 +247,8 @@ class ChatPane(Vertical):
         self.chat_id: Optional[int] = None
         self.msg_data: List = []
         self.reply_to_message: Optional[int] = None
+        self.filter_type: Optional[str] = None  # None, "sender", "media", "link"
+        self.filter_value: Optional[str] = None  # sender name or media type
 
     def compose(self):
         yield Static("", classes="pane-header")
@@ -435,7 +438,6 @@ class TelegramApp(App):
         Binding("ctrl+q", "quit", "Quit", priority=True),
         Binding("ctrl+r", "refresh", "Refresh", priority=True),
         Binding("ctrl+l", "clear", "Clear", priority=True),
-        Binding("tab", "cycle_pane", "Next pane", priority=True),
         Binding("ctrl+v", "split_vertical", "Split V", priority=True),
         Binding("ctrl+b", "split_horizontal", "Split H", priority=True),
         Binding("ctrl+w", "close_pane", "Close pane", priority=True),
@@ -443,6 +445,25 @@ class TelegramApp(App):
     ]
 
     TITLE = "Telegram Terminal Client"
+
+    # Available commands for autocomplete
+    COMMANDS = [
+        "/reply ",
+        "/media ",
+        "/m ",
+        "/edit ",
+        "/e ",
+        "/delete ",
+        "/del ",
+        "/d ",
+        "/alias ",
+        "/unalias ",
+        "/filter ",
+        "/search ",
+        "/s ",
+        "/new ",
+        "/newgroup ",
+    ]
 
     def __init__(self):
         super().__init__()
@@ -980,15 +1001,27 @@ class TelegramApp(App):
         # Calculate where to show unread marker (before the last N unread messages)
         unread_marker_idx = len(msg_data) - unread_count if unread_count > 0 else -1
 
+        # Show filter indicator if active
         lines = []
+        if pane.filter_type:
+            filter_info = f"Filter: {pane.filter_type}={pane.filter_value} (use /filter off to disable)"
+            lines.append(f"[bold magenta]{filter_info}[/bold magenta]")
+            lines.append("")
+
+        filtered_count = 0
         for idx, item in enumerate(msg_data):
+            msg, sender_name, is_out = item[0], item[1], item[2]
+            reply_info = item[3] if len(item) > 3 else None
+
+            # Apply filter
+            if not self._message_matches_filter(msg, sender_name, pane):
+                filtered_count += 1
+                continue
+
             # Show unread marker before unread messages
             if idx == unread_marker_idx and unread_count > 0:
                 marker_line = "-" * (width // 2)
                 lines.append(f"[bold yellow]{marker_line} {unread_count} unread {marker_line}[/bold yellow]")
-
-            msg, sender_name, is_out = item[0], item[1], item[2]
-            reply_info = item[3] if len(item) > 3 else None
 
             media_label = self._get_media_label(msg)
             text = msg.text or ""
@@ -1228,6 +1261,26 @@ class TelegramApp(App):
             event.input.value = ""
             return
 
+        if text.startswith("/filter"):
+            self._handle_filter_command(text, pane)
+            event.input.value = ""
+            return
+
+        if text.startswith("/search ") or text.startswith("/s "):
+            self._handle_search_command(text, pane)
+            event.input.value = ""
+            return
+
+        if text.startswith("/new "):
+            self._handle_new_chat_command(text, pane)
+            event.input.value = ""
+            return
+
+        if text.startswith("/newgroup "):
+            self._handle_new_group_command(text, pane)
+            event.input.value = ""
+            return
+
         self._send_message(text, pane)
         event.input.value = ""
         pane.reply_to_message = None
@@ -1242,6 +1295,49 @@ class TelegramApp(App):
         pane = self._find_pane_for_input(event.input)
         if pane and pane is not self.active_pane:
             self._set_active_pane(pane)
+
+    def on_key(self, event) -> None:
+        """Handle key events for autocomplete and Tab navigation."""
+        if event.key != "tab":
+            return
+
+        # Check if we're in a pane input with a command
+        if self.active_pane:
+            inp = self.active_pane.get_input()
+            if inp and inp.has_focus:
+                text = inp.value
+                if text.startswith("/"):
+                    # Try autocomplete
+                    matches = [cmd for cmd in self.COMMANDS if cmd.startswith(text)]
+
+                    if len(matches) == 1:
+                        # Single match - complete it
+                        inp.value = matches[0]
+                        inp.cursor_position = len(matches[0])
+                        event.prevent_default()
+                        event.stop()
+                        return
+                    elif len(matches) > 1:
+                        # Multiple matches - find common prefix
+                        common = matches[0]
+                        for m in matches[1:]:
+                            while not m.startswith(common):
+                                common = common[:-1]
+                        if len(common) > len(text):
+                            inp.value = common
+                            inp.cursor_position = len(common)
+                        else:
+                            # Show available options
+                            options = ", ".join(m.strip() for m in matches)
+                            self.notify(f"Options: {options}", severity="info")
+                        event.prevent_default()
+                        event.stop()
+                        return
+
+        # No autocomplete - cycle panes instead
+        self.action_cycle_pane()
+        event.prevent_default()
+        event.stop()
 
     def on_focus(self, event) -> None:
         """Track which pane gets focus when clicking input."""
@@ -1517,6 +1613,315 @@ class TelegramApp(App):
         # Refresh the chat to show original name
         if pane.chat_id:
             self.schedule_load_messages(pane.chat_id, pane)
+
+    def _handle_filter_command(self, text: str, pane: ChatPane) -> None:
+        """Handle /filter command for filtering messages."""
+        parts = text.split(maxsplit=1)
+
+        # /filter with no args shows current filter or help
+        if len(parts) < 2:
+            if pane.filter_type:
+                self.notify(f"Current filter: {pane.filter_type}={pane.filter_value}", severity="info")
+            else:
+                self.notify("Usage: /filter off | photo | video | audio | doc | link | <name>", severity="info")
+            return
+
+        filter_arg = parts[1].strip().lower()
+
+        # Turn off filter
+        if filter_arg == "off":
+            pane.filter_type = None
+            pane.filter_value = None
+            self.notify("Filter disabled", severity="success")
+            if pane.msg_data:
+                pane.set_messages(self._format_messages(pane.msg_data, pane))
+            return
+
+        # Media type filters
+        media_types = {
+            "photo": "photo",
+            "photos": "photo",
+            "video": "video",
+            "videos": "video",
+            "audio": "audio",
+            "voice": "voice",
+            "doc": "document",
+            "document": "document",
+            "documents": "document",
+            "file": "document",
+            "files": "document",
+            "link": "link",
+            "links": "link",
+            "url": "link",
+            "sticker": "sticker",
+            "stickers": "sticker",
+            "gif": "gif",
+            "gifs": "gif",
+        }
+
+        if filter_arg in media_types:
+            pane.filter_type = "media"
+            pane.filter_value = media_types[filter_arg]
+            self.notify(f"Filtering: {pane.filter_value} only", severity="success")
+        else:
+            # Sender name filter (case-insensitive partial match)
+            pane.filter_type = "sender"
+            pane.filter_value = parts[1].strip()  # Keep original case for display
+            self.notify(f"Filtering: messages from '{pane.filter_value}'", severity="success")
+
+        # Refresh display with filter
+        if pane.msg_data:
+            pane.set_messages(self._format_messages(pane.msg_data, pane))
+
+    def _message_matches_filter(self, msg, sender_name: str, pane: ChatPane) -> bool:
+        """Check if a message matches the current filter."""
+        if not pane.filter_type:
+            return True
+
+        if pane.filter_type == "sender":
+            # Case-insensitive partial match on sender name
+            return pane.filter_value.lower() in sender_name.lower()
+
+        if pane.filter_type == "media":
+            filter_val = pane.filter_value
+            if filter_val == "photo":
+                return bool(msg.photo)
+            elif filter_val == "video":
+                return bool(msg.video)
+            elif filter_val == "audio":
+                return bool(msg.audio)
+            elif filter_val == "voice":
+                return bool(msg.voice)
+            elif filter_val == "document":
+                return bool(msg.document)
+            elif filter_val == "sticker":
+                return bool(msg.sticker)
+            elif filter_val == "gif":
+                return bool(msg.gif)
+            elif filter_val == "link":
+                # Check for URLs in text
+                if msg.text:
+                    return "http://" in msg.text or "https://" in msg.text
+                return False
+
+        return True
+
+    def _handle_search_command(self, text: str, pane: ChatPane) -> None:
+        """Handle /search or /s command to search message history."""
+        parts = text.split(maxsplit=1)
+        if len(parts) < 2:
+            self.notify("Usage: /search <query> or /s <query>", severity="warning")
+            return
+
+        query = parts[1].strip()
+        if not query:
+            self.notify("Search query cannot be empty", severity="warning")
+            return
+
+        if not pane.chat_id:
+            self.notify("Select a chat first", severity="warning")
+            return
+
+        if pane.chat_id not in self.chats:
+            self.notify("Chat not found", severity="warning")
+            return
+
+        self.notify(f"Searching for '{query}'...", severity="info")
+        self._do_search(query, pane)
+
+    def _do_search(self, query: str, pane: ChatPane) -> None:
+        """Perform search in Telegram history."""
+        if not self.client or not self.telegram_loop:
+            self.notify("Telegram connection not ready", severity="error")
+            return
+
+        chat_id = pane.chat_id
+        entity = self.chats[chat_id]['entity']
+
+        async def _search():
+            try:
+                # Search in message history
+                messages = await self.client.get_messages(
+                    entity,
+                    limit=50,
+                    search=query
+                )
+
+                if not messages:
+                    self.call_from_thread(lambda: self.notify("No results found", severity="info"))
+                    return
+
+                # Build msg_data like _load_and_resolve
+                msg_by_id = {m.id: m for m in messages}
+                sender_cache = {}
+                for msg in messages:
+                    sender_cache[msg.id] = await self._resolve_sender_name(msg)
+
+                msg_data = []
+                for msg in reversed(messages):
+                    sender_name = sender_cache[msg.id]
+                    reply_info = None
+                    if msg.reply_to and hasattr(msg.reply_to, 'reply_to_msg_id') and msg.reply_to.reply_to_msg_id:
+                        reply_id = msg.reply_to.reply_to_msg_id
+                        if reply_id in msg_by_id:
+                            reply_msg = msg_by_id[reply_id]
+                            reply_sender = sender_cache.get(reply_id, "Unknown")
+                            reply_text = reply_msg.text[:40] if reply_msg.text else "[Media]"
+                            if reply_msg.text and len(reply_msg.text) > 40:
+                                reply_text += "..."
+                            reply_info = (reply_sender, reply_text)
+                    msg_data.append((msg, sender_name, msg.out, reply_info))
+
+                # Store search results and display
+                def show_results():
+                    pane.msg_data = msg_data
+                    # Add search indicator to header
+                    chat_info = self.chats[chat_id]
+                    header_text = f"{chat_info['name']} [bold magenta]| Search: '{query}' ({len(messages)} results)[/bold magenta]"
+                    try:
+                        header = pane.query_one(".pane-header", Static)
+                        header.update(header_text)
+                    except Exception:
+                        pass
+                    pane.set_messages(self._format_messages(msg_data, pane))
+                    self.notify(f"Found {len(messages)} results", severity="success")
+
+                self.call_from_thread(show_results)
+
+            except Exception as e:
+                _log(f"Search failed: {e}", "ERROR")
+                err_msg = str(e)
+                self.call_from_thread(lambda err=err_msg: self.notify(f"Search failed: {err}", severity="error"))
+
+        asyncio.run_coroutine_threadsafe(_search(), self.telegram_loop)
+
+    def _handle_new_chat_command(self, text: str, pane: ChatPane) -> None:
+        """Handle /new @username command to start a new chat."""
+        parts = text.split(maxsplit=1)
+        if len(parts) < 2:
+            self.notify("Usage: /new @username or /new phone_number", severity="warning")
+            return
+
+        target = parts[1].strip()
+        if not target:
+            self.notify("Username or phone number required", severity="warning")
+            return
+
+        self.notify(f"Looking up {target}...", severity="info")
+        self._start_new_chat(target, pane)
+
+    def _start_new_chat(self, target: str, pane: ChatPane) -> None:
+        """Start a new chat with a user."""
+        if not self.client or not self.telegram_loop:
+            self.notify("Telegram connection not ready", severity="error")
+            return
+
+        async def _start():
+            try:
+                # Try to get the entity (user)
+                entity = await self.client.get_entity(target)
+
+                if not entity:
+                    self.call_from_thread(lambda: self.notify("User not found", severity="error"))
+                    return
+
+                # Get user info
+                chat_id = entity.id
+                if isinstance(entity, User):
+                    name = entity.first_name or ""
+                    if entity.last_name:
+                        name += f" {entity.last_name}"
+                    if not name:
+                        name = f"User {chat_id}"
+                    username = f"@{entity.username}" if entity.username else ""
+                else:
+                    name = getattr(entity, 'title', f"Chat {chat_id}")
+                    username = f"@{entity.username}" if hasattr(entity, 'username') and entity.username else ""
+
+                # Add to chats dict
+                self.chats[chat_id] = {
+                    'name': name, 'username': username, 'entity': entity,
+                    'unread': 0, 'last_message': None
+                }
+
+                # Update sidebar and open chat
+                def open_chat():
+                    try:
+                        sidebar = self.query_one("#sidebar", ChatList)
+                        sidebar.update_chats(self.chats.copy())
+                    except Exception:
+                        pass
+                    pane.chat_id = chat_id
+                    self.schedule_load_messages(chat_id, pane)
+                    self.notify(f"Chat opened: {name}", severity="success")
+
+                self.call_from_thread(open_chat)
+
+            except Exception as e:
+                _log(f"New chat failed: {e}", "ERROR")
+                err_msg = str(e)
+                self.call_from_thread(lambda err=err_msg: self.notify(f"Could not find user: {err}", severity="error"))
+
+        asyncio.run_coroutine_threadsafe(_start(), self.telegram_loop)
+
+    def _handle_new_group_command(self, text: str, pane: ChatPane) -> None:
+        """Handle /newgroup name command to create a new group."""
+        parts = text.split(maxsplit=1)
+        if len(parts) < 2:
+            self.notify("Usage: /newgroup <group name>", severity="warning")
+            return
+
+        group_name = parts[1].strip()
+        if not group_name:
+            self.notify("Group name required", severity="warning")
+            return
+
+        self.notify(f"Creating group '{group_name}'...", severity="info")
+        self._create_new_group(group_name, pane)
+
+    def _create_new_group(self, group_name: str, pane: ChatPane) -> None:
+        """Create a new group."""
+        if not self.client or not self.telegram_loop:
+            self.notify("Telegram connection not ready", severity="error")
+            return
+
+        async def _create():
+            try:
+                # Create the group (with just yourself initially)
+                result = await self.client(CreateChatRequest(
+                    users=[],  # Empty list = just yourself
+                    title=group_name
+                ))
+
+                # Get the created chat
+                chat = result.chats[0]
+                chat_id = chat.id
+
+                # Add to chats dict
+                self.chats[chat_id] = {
+                    'name': group_name, 'username': '', 'entity': chat,
+                    'unread': 0, 'last_message': None
+                }
+
+                # Update sidebar and open chat
+                def open_group():
+                    try:
+                        sidebar = self.query_one("#sidebar", ChatList)
+                        sidebar.update_chats(self.chats.copy())
+                    except Exception:
+                        pass
+                    pane.chat_id = chat_id
+                    self.schedule_load_messages(chat_id, pane)
+                    self.notify(f"Group created: {group_name}", severity="success")
+
+                self.call_from_thread(open_group)
+
+            except Exception as e:
+                _log(f"Create group failed: {e}", "ERROR")
+                err_msg = str(e)
+                self.call_from_thread(lambda err=err_msg: self.notify(f"Could not create group: {err}", severity="error"))
+
+        asyncio.run_coroutine_threadsafe(_create(), self.telegram_loop)
 
     def _handle_delete_command(self, text: str, pane: ChatPane) -> None:
         """Handle /delete N or /del N or /d N command."""

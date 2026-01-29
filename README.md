@@ -23,6 +23,8 @@ A terminal/TUI client for Telegram built with Python, Textual and Telethon.
 - Message reactions display (right-aligned)
 - Spotify link detection when using shorting URL service
 - User aliases (shorten long names)
+- Message filtering (by sender, media type, links)
+- Search in message history
 
 ## Installation
 
@@ -78,6 +80,11 @@ python telegram_client.py
 | `/delete N` or `/del N` or `/d N` | Delete your message #N |
 | `/alias N name` | Set display alias for sender of message #N |
 | `/unalias N` | Remove alias for sender of message #N |
+| `/filter <type>` | Filter messages (photo/video/audio/doc/link/name) |
+| `/filter off` | Disable filter |
+| `/search <query>` or `/s <query>` | Search message history |
+| `/new @username` | Start new chat with user |
+| `/newgroup <name>` | Create a new group |
 
 ## Configuration Files
 
@@ -103,12 +110,9 @@ python telegram_client.py
 ## Current Limitations
 
 - Limited to 100 conversations and 50 message history per conversation
-- No search functionality yet
 
 ## Future Improvements
 
-- [ ] Search functionality
-- [ ] Group management
-- [ ] Message filtering
 - [ ] Desktop notifications
 - [ ] Inline media preview (ASCII art)
+- [ ] Add/remove members from groups
