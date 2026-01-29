@@ -1,5 +1,6 @@
 # Telegram session and credentials (sensitive data)
 telegram_session.session
+telegram_session.session-journal
 telegram_config.json
 telegram_layout.json
 telegram_aliases.json

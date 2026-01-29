@@ -446,6 +446,7 @@ class TelegramApp(App):
         Binding("ctrl+e", "toggle_reactions", "Toggle reactions", priority=True),
         Binding("ctrl+n", "toggle_notifications", "Toggle notifications", priority=True),
         Binding("ctrl+d", "toggle_compact", "Toggle compact mode", priority=True),
+        Binding("ctrl+o", "toggle_emojis", "Toggle emojis", priority=True),
     ]
 
     TITLE = "Telegram Terminal Client"
@@ -497,6 +498,7 @@ class TelegramApp(App):
         self.show_reactions: bool = True  # Toggle for showing reactions
         self.desktop_notifications: bool = True  # Toggle for desktop notifications
         self.compact_mode: bool = True  # Toggle for compact message display
+        self.show_emojis: bool = True  # Toggle for showing emojis
 
         self.panes: list = []
         self.active_pane: Optional[ChatPane] = None
@@ -1102,6 +1104,9 @@ class TelegramApp(App):
             # Escape and wrap the message text (not the media label)
             if text:
                 text = self._shorten_urls_in_text(text)
+                # Strip emojis if disabled
+                if not self.show_emojis:
+                    text = self._strip_emojis(text)
                 safe_text = text.replace("[", "\\[")
                 wrapped = self._wrap_text(safe_text, prefix_len, width)
                 if media_label:
@@ -1115,6 +1120,9 @@ class TelegramApp(App):
                 reply_sender, reply_text = reply_info
                 # Only show first line of reply
                 reply_text = reply_text.split("\n")[0]
+                # Strip emojis if disabled
+                if not self.show_emojis:
+                    reply_text = self._strip_emojis(reply_text)
                 safe_reply_sender = reply_sender.replace("[", "\\[")
                 safe_reply_text = reply_text.replace("[", "\\[")
                 lines.append(f"[dim italic]> {safe_reply_sender}: {safe_reply_text}[/dim italic]")
@@ -2594,6 +2602,39 @@ class TelegramApp(App):
         for pane in self.panes:
             if pane.chat_id and pane.msg_data:
                 pane.set_messages(self._format_messages(pane.msg_data, pane))
+
+    def action_toggle_emojis(self):
+        """Toggle emoji display in messages."""
+        self.show_emojis = not self.show_emojis
+        status = "ON" if self.show_emojis else "OFF"
+        self.notify(f"Emojis: {status}", severity="info")
+        # Refresh all panes to apply the change
+        for pane in self.panes:
+            if pane.chat_id and pane.msg_data:
+                pane.set_messages(self._format_messages(pane.msg_data, pane))
+
+    def _strip_emojis(self, text: str) -> str:
+        """Remove emojis from text."""
+        # Emoji unicode ranges
+        emoji_pattern = re.compile(
+            "["
+            "\U0001F600-\U0001F64F"  # emoticons
+            "\U0001F300-\U0001F5FF"  # symbols & pictographs
+            "\U0001F680-\U0001F6FF"  # transport & map symbols
+            "\U0001F1E0-\U0001F1FF"  # flags
+            "\U00002702-\U000027B0"  # dingbats
+            "\U000024C2-\U0001F251"  # enclosed characters
+            "\U0001F900-\U0001F9FF"  # supplemental symbols
+            "\U0001FA00-\U0001FA6F"  # chess symbols
+            "\U0001FA70-\U0001FAFF"  # symbols extended-A
+            "\U00002600-\U000026FF"  # misc symbols
+            "\U00002700-\U000027BF"  # dingbats
+            "\U0001F000-\U0001F02F"  # mahjong tiles
+            "\U0001F0A0-\U0001F0FF"  # playing cards
+            "]+",
+            flags=re.UNICODE
+        )
+        return emoji_pattern.sub("", text)
 
     def _send_desktop_notification(self, title: str, message: str) -> None:
         """Send a desktop notification."""

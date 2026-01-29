@@ -16,6 +16,7 @@ A terminal/TUI client for Telegram built with Python, Textual and Telethon.
 - Message filtering (by sender, media type, links)
 - Search in message history
 - Desktop notifications (macOS/Linux)
+- DISABLE EMOJIS IN CHATS!
 
 ..and many others!
 
@@ -63,6 +64,7 @@ python telegram_client.py
 | `Ctrl+E` | Toggle reactions on/off |
 | `Ctrl+N` | Toggle desktop notifications |
 | `Ctrl+D` | Toggle compact mode (spacing between messages) |
+| `Ctrl+O` | Toggle emojis on/off |
 | `Ctrl+Q` | Quit (saves layout) |
 | `Tab` | Autocomplete commands (when typing /) |
 
