@@ -17,6 +17,8 @@ A terminal/TUI client for Telegram built with Python, Textual and Telethon.
 - Search in message history
 - Desktop notifications (macOS/Linux)
 
+..and many others!
+
 ## Installation
 
 1. Install dependencies:
