@@ -36,7 +36,7 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, ScrollableContainer, Vertical
 from textual.message import Message
-from textual.widgets import Header, Input, ListItem, ListView, Static
+from textual.widgets import Input, ListItem, ListView, Static
 
 from telethon import TelegramClient, events
 from telethon.tl.types import (
@@ -453,6 +453,8 @@ class TelegramApp(App):
         Binding("ctrl+d", "toggle_compact", "Toggle compact mode", priority=True),
         Binding("ctrl+o", "toggle_emojis", "Toggle emojis", priority=True),
         Binding("ctrl+g", "toggle_line_numbers", "Toggle line numbers", priority=True),
+        Binding("ctrl+t", "toggle_timestamps", "Toggle timestamps", priority=True),
+        Binding("ctrl+shift+t", "toggle_timestamps", "Toggle timestamps", priority=True),
     ]
 
     TITLE = "Telegram Terminal Client"
@@ -506,6 +508,7 @@ class TelegramApp(App):
         self.compact_mode: bool = True  # Toggle for compact message display
         self.show_emojis: bool = True  # Toggle for showing emojis
         self.show_line_numbers: bool = True  # Toggle for showing message numbers
+        self.show_timestamps: bool = True  # Toggle for showing timestamps
 
         self.panes: list = []
         self.active_pane: Optional[ChatPane] = None
@@ -533,6 +536,7 @@ class TelegramApp(App):
                     self.compact_mode = config.get('compact_mode', True)
                     self.show_emojis = config.get('show_emojis', True)
                     self.show_line_numbers = config.get('show_line_numbers', True)
+                    self.show_timestamps = config.get('show_timestamps', True)
             except Exception:
                 pass
 
@@ -547,6 +551,7 @@ class TelegramApp(App):
                     'compact_mode': self.compact_mode,
                     'show_emojis': self.show_emojis,
                     'show_line_numbers': self.show_line_numbers,
+                    'show_timestamps': self.show_timestamps,
                 }, f)
         except Exception:
             pass
@@ -686,7 +691,6 @@ class TelegramApp(App):
         return None
 
     def compose(self) -> ComposeResult:
-        yield Header(show_clock=True)
         with Horizontal():
             yield ChatList(id="sidebar")
             yield Horizontal(id="pane-container")
@@ -1127,10 +1131,16 @@ class TelegramApp(App):
             # Build line number prefix (optional)
             if self.show_line_numbers:
                 num_prefix = f"[dim]{num_str}[/dim] "
-                prefix_len = len(num_str) + 1 + len(timestamp) + 1 + len(sender_name) + 2
+                if self.show_timestamps:
+                    prefix_len = len(num_str) + 1 + len(timestamp) + 1 + len(sender_name) + 2
+                else:
+                    prefix_len = len(num_str) + 1 + len(sender_name) + 2
             else:
                 num_prefix = ""
-                prefix_len = len(timestamp) + 1 + len(sender_name) + 2
+                if self.show_timestamps:
+                    prefix_len = len(timestamp) + 1 + len(sender_name) + 2
+                else:
+                    prefix_len = len(sender_name) + 2
 
             # Escape and wrap the message text (not the media label)
             if text:
@@ -1164,10 +1174,11 @@ class TelegramApp(App):
             reactions_suffix = f" [dim]{reactions}[/dim]" if reactions else ""
 
             # Build message line with number on the left
+            timestamp_part = f"[dim]{timestamp}[/dim] " if self.show_timestamps else ""
             if is_out:
-                msg_line = f"{num_prefix}[dim]{timestamp}[/dim] {reply_arrow}[bold green]{safe_name}[/bold green]: {wrapped}{reactions_suffix}"
+                msg_line = f"{num_prefix}{timestamp_part}{reply_arrow}[bold green]{safe_name}[/bold green]: {wrapped}{reactions_suffix}"
             else:
-                msg_line = f"{num_prefix}[dim]{timestamp}[/dim] {reply_arrow}[bold cyan]{safe_name}[/bold cyan]: {wrapped}{reactions_suffix}"
+                msg_line = f"{num_prefix}{timestamp_part}{reply_arrow}[bold cyan]{safe_name}[/bold cyan]: {wrapped}{reactions_suffix}"
 
             lines.append(msg_line)
 
@@ -2687,6 +2698,16 @@ class TelegramApp(App):
             if pane.chat_id and pane.msg_data:
                 pane.set_messages(self._format_messages(pane.msg_data, pane))
 
+    def action_toggle_timestamps(self):
+        """Toggle display of message timestamps."""
+        self.show_timestamps = not self.show_timestamps
+        status = "ON" if self.show_timestamps else "OFF"
+        self.notify(f"Timestamps: {status}", severity="info")
+        # Refresh all panes to apply the change
+        for pane in self.panes:
+            if pane.chat_id and pane.msg_data:
+                pane.set_messages(self._format_messages(pane.msg_data, pane))
+
     def _strip_emojis(self, text: str) -> str:
         """Remove emojis from text."""
         # Emoji unicode ranges
@@ -2724,10 +2745,48 @@ class TelegramApp(App):
                 script = f'display notification "{safe_msg}" with title "{safe_title}"'
                 subprocess.run(["osascript", "-e", script], capture_output=True)
             elif system == "Linux":
-                subprocess.run(["notify-send", title, message], capture_output=True)
+                # Ensure DBUS_SESSION_BUS_ADDRESS is set for notifications
+                env = os.environ.copy()
+                if "DBUS_SESSION_BUS_ADDRESS" not in env:
+                    # Try to get DBUS session address from session-bus directory
+                    dbus_session_dir = os.path.expanduser("~/.dbus/session-bus")
+                    if os.path.exists(dbus_session_dir):
+                        # Find the most recent session file
+                        session_files = [f for f in os.listdir(dbus_session_dir) if f.endswith("-0")]
+                        if session_files:
+                            # Sort by modification time, get most recent
+                            session_files.sort(key=lambda f: os.path.getmtime(os.path.join(dbus_session_dir, f)), reverse=True)
+                            dbus_session_file = os.path.join(dbus_session_dir, session_files[0])
+                            try:
+                                with open(dbus_session_file, 'r') as f:
+                                    for line in f:
+                                        if line.startswith("DBUS_SESSION_BUS_ADDRESS="):
+                                            env["DBUS_SESSION_BUS_ADDRESS"] = line.split("=", 1)[1].strip().strip('"').strip("'")
+                                            break
+                            except (IOError, OSError):
+                                pass
+                
+                # Use proper notify-send arguments with app name, urgency, and timeout
+                subprocess.run(
+                    [
+                        "notify-send",
+                        "--app-name=Telegram Client",
+                        "--urgency=normal",
+                        "--expire-time=5000",
+                        str(title),
+                        str(message)
+                    ],
+                    env=env,
+                    capture_output=True,
+                    timeout=5
+                )
             # Windows would need win10toast or similar
-        except Exception:
-            pass
+        except subprocess.TimeoutExpired:
+            _log("Notification timeout", "WARNING")
+        except FileNotFoundError:
+            _log("notify-send not found. Install libnotify-bin: sudo apt install libnotify-bin", "WARNING")
+        except Exception as e:
+            _log(f"Notification failed: {e}", "WARNING")
 
     async def action_quit(self):
         self.save_layout()
