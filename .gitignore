@@ -2,6 +2,7 @@
 telegram_session.session
 telegram_config.json
 telegram_layout.json
+telegram_aliases.json
 
 # Logs
 *.log

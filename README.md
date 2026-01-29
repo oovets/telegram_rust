@@ -9,12 +9,20 @@ A terminal/TUI client for Telegram built with Python, Textual and Telethon.
 - Split panes - view multiple conversations simultaneously
 - Real-time message sending and receiving
 - Message history with reply support
+- Edit and delete your own messages
 - Media download and viewing (photos, videos, documents, etc.)
 - Session management (saves login)
 - Two-factor authentication support
 - Layout persistence (remembers your splits and open chats)
 - Word-wrap at word boundaries for better readability
 - URL shortening for long links
+- Pinned message display in chat header
+- Online status indicator for users
+- Typing indicator when someone is typing
+- Unread message marker line
+- Message reactions display (right-aligned)
+- Spotify link detection when using shorting URL service
+- User aliases (shorten long names)
 
 ## Installation
 
@@ -57,6 +65,7 @@ python telegram_client.py
 | `Tab` | Cycle between panes |
 | `Ctrl+R` | Refresh conversations |
 | `Ctrl+L` | Clear current pane |
+| `Ctrl+E` | Toggle reactions on/off |
 | `Ctrl+Q` | Quit (saves layout) |
 
 ## Commands
@@ -65,6 +74,10 @@ python telegram_client.py
 |---------|-------------|
 | `/reply N` | Reply to message #N |
 | `/media N` or `/m N` | Download and open media from message #N |
+| `/edit N text` or `/e N text` | Edit your message #N with new text |
+| `/delete N` or `/del N` or `/d N` | Delete your message #N |
+| `/alias N name` | Set display alias for sender of message #N |
+| `/unalias N` | Remove alias for sender of message #N |
 
 ## Configuration Files
 
@@ -73,6 +86,7 @@ python telegram_client.py
 | `telegram_config.json` | API credentials (saved automatically) |
 | `telegram_session.session` | Session data (no need to log in every time) |
 | `telegram_layout.json` | Window layout and open chats (saved on quit) |
+| `telegram_aliases.json` | User display name aliases |
 
 ## Security
 
@@ -90,7 +104,6 @@ python telegram_client.py
 
 - Limited to 100 conversations and 50 message history per conversation
 - No search functionality yet
-- No message editing/deletion yet
 
 ## Future Improvements
 
@@ -98,5 +111,4 @@ python telegram_client.py
 - [ ] Group management
 - [ ] Message filtering
 - [ ] Desktop notifications
-- [ ] Message editing and deletion
 - [ ] Inline media preview (ASCII art)

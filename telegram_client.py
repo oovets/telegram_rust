@@ -257,13 +257,36 @@ class ChatPane(Vertical):
             yield Static("", classes="pane-reply-preview")
             yield Input(placeholder="Type a message... (/reply N to reply)", classes="pane-input")
 
-    def set_chat_header(self, name: str, username: str = "") -> None:
-        """Update the pane header with chat name."""
+    def set_chat_header(self, name: str, username: str = "", pinned: str = None, online: str = "") -> None:
+        """Update the pane header with chat name, online status, and optional pinned message."""
         header = self.query_one(".pane-header", Static)
         text = name
+        if online:
+            text += f" [{online}]"
         if username:
             text += f" {username}"
+        if pinned:
+            text += f" [dim]| Pinned: {pinned}[/dim]"
+        self._header_base = text  # Store base header for typing indicator
         header.update(text)
+
+    def show_typing_indicator(self, name: str) -> None:
+        """Show typing indicator in header."""
+        try:
+            header = self.query_one(".pane-header", Static)
+            base = getattr(self, '_header_base', '')
+            header.update(f"{base} [italic dim]{name} is typing...[/italic dim]")
+        except Exception:
+            pass
+
+    def hide_typing_indicator(self) -> None:
+        """Hide typing indicator, restore original header."""
+        try:
+            header = self.query_one(".pane-header", Static)
+            base = getattr(self, '_header_base', '')
+            header.update(base)
+        except Exception:
+            pass
 
     def set_messages(self, text: str) -> None:
         """Update the messages display and scroll to bottom."""
@@ -416,6 +439,7 @@ class TelegramApp(App):
         Binding("ctrl+v", "split_vertical", "Split V", priority=True),
         Binding("ctrl+b", "split_horizontal", "Split H", priority=True),
         Binding("ctrl+w", "close_pane", "Close pane", priority=True),
+        Binding("ctrl+e", "toggle_reactions", "Toggle reactions", priority=True),
     ]
 
     TITLE = "Telegram Terminal Client"
@@ -426,6 +450,7 @@ class TelegramApp(App):
         self.session_file = os.path.join(script_dir, "telegram_session.session")
         self.config_file = os.path.join(script_dir, "telegram_config.json")
         self.layout_file = os.path.join(script_dir, "telegram_layout.json")
+        self.aliases_file = os.path.join(script_dir, "telegram_aliases.json")
 
         self.api_id = None
         self.api_hash = None
@@ -436,6 +461,8 @@ class TelegramApp(App):
         self.chats: Dict[int, Dict] = {}
         self.messages: Dict[int, List] = {}
         self.running = True
+        self.aliases: Dict[int, str] = {}  # user_id -> alias name
+        self.show_reactions: bool = True  # Toggle for showing reactions
 
         self.panes: list = []
         self.active_pane: Optional[ChatPane] = None
@@ -443,6 +470,7 @@ class TelegramApp(App):
 
         self.load_config()
         self.load_layout()
+        self.load_aliases()
 
     def load_config(self):
         if os.path.exists(self.config_file):
@@ -460,6 +488,28 @@ class TelegramApp(App):
                 json.dump({'api_id': self.api_id, 'api_hash': self.api_hash}, f)
         except Exception:
             pass
+
+    def load_aliases(self) -> None:
+        """Load user aliases from file."""
+        if os.path.exists(self.aliases_file):
+            try:
+                with open(self.aliases_file, 'r') as f:
+                    data = json.load(f)
+                    # Convert string keys back to int
+                    self.aliases = {int(k): v for k, v in data.items()}
+            except (json.JSONDecodeError, OSError) as e:
+                _log(f"Failed to load aliases: {e}", "ERROR")
+                self.aliases = {}
+
+    def save_aliases(self) -> None:
+        """Save user aliases to file."""
+        try:
+            # Convert int keys to strings for JSON
+            data = {str(k): v for k, v in self.aliases.items()}
+            with open(self.aliases_file, 'w') as f:
+                json.dump(data, f, indent=2)
+        except (OSError, TypeError) as e:
+            _log(f"Failed to save aliases: {e}", "ERROR")
 
     def load_layout(self) -> None:
         """Load saved layout from file."""
@@ -657,8 +707,37 @@ class TelegramApp(App):
 
             await self.load_conversations()
             self.client.add_event_handler(self.on_new_message, events.NewMessage)
+            self.client.add_event_handler(self.on_user_typing, events.UserUpdate)
         except Exception as e:
             _log(f"Connection error: {e}", "ERROR")
+
+    async def on_user_typing(self, event) -> None:
+        """Handle typing indicator events."""
+        if not hasattr(event, 'typing') or not event.typing:
+            return
+
+        try:
+            user_id = event.user_id
+            # Find which pane has this user's chat open
+            for pane in self.panes:
+                if pane.chat_id == user_id:
+                    # Get user name
+                    user_name = "Someone"
+                    if user_id in self.chats:
+                        user_name = self.chats[user_id]['name']
+
+                    def show_typing(p=pane, name=user_name):
+                        p.show_typing_indicator(name)
+
+                    def hide_typing(p=pane):
+                        p.hide_typing_indicator()
+
+                    self.call_from_thread(show_typing)
+                    # Auto-hide after 5 seconds
+                    self.call_from_thread(lambda: self.set_timer(5.0, hide_typing))
+                    break
+        except Exception as e:
+            _log(f"Typing event error: {e}", "ERROR")
 
     async def load_conversations(self):
         if not self.client:
@@ -811,8 +890,50 @@ class TelegramApp(App):
             return self._url_cache[url]
         return url_pattern.sub(replacer, text)
 
+    def _format_reactions(self, msg) -> str:
+        """Format message reactions as a string."""
+        if not hasattr(msg, 'reactions') or not msg.reactions:
+            return ""
+
+        try:
+            results = msg.reactions.results
+            if not results:
+                return ""
+
+            reaction_strs = []
+            for r in results:
+                count = r.count
+                # Get the emoji or custom emoji
+                if hasattr(r.reaction, 'emoticon'):
+                    emoji = r.reaction.emoticon
+                elif hasattr(r.reaction, 'document_id'):
+                    emoji = "?"  # Custom emoji, can't display
+                else:
+                    continue
+
+                if count > 1:
+                    reaction_strs.append(f"{count}x{emoji}")
+                else:
+                    reaction_strs.append(emoji)
+
+            if reaction_strs:
+                return " ".join(reaction_strs)
+        except Exception:
+            pass
+        return ""
+
     def _get_media_label(self, msg) -> str:
+        # Check for Spotify links (they come with a photo preview)
+        if msg.text and "open.spotify.com" in msg.text:
+            return "[Spotify]"
         if msg.photo:
+            # Check if this is a web page preview with Spotify
+            if hasattr(msg, 'media') and hasattr(msg.media, 'webpage'):
+                webpage = msg.media.webpage
+                if hasattr(webpage, 'url') and webpage.url and "spotify.com" in webpage.url:
+                    return "[Spotify]"
+                if hasattr(webpage, 'site_name') and webpage.site_name == "Spotify":
+                    return "[Spotify]"
             return "[Photo]"
         elif msg.video:
             return "[Video]"
@@ -851,8 +972,21 @@ class TelegramApp(App):
         if width < 20:
             width = 80
 
+        # Get unread count to show marker
+        unread_count = 0
+        if pane.chat_id and pane.chat_id in self.chats:
+            unread_count = self.chats[pane.chat_id].get('unread_count_at_load', 0)
+
+        # Calculate where to show unread marker (before the last N unread messages)
+        unread_marker_idx = len(msg_data) - unread_count if unread_count > 0 else -1
+
         lines = []
         for idx, item in enumerate(msg_data):
+            # Show unread marker before unread messages
+            if idx == unread_marker_idx and unread_count > 0:
+                marker_line = "-" * (width // 2)
+                lines.append(f"[bold yellow]{marker_line} {unread_count} unread {marker_line}[/bold yellow]")
+
             msg, sender_name, is_out = item[0], item[1], item[2]
             reply_info = item[3] if len(item) > 3 else None
 
@@ -879,17 +1013,53 @@ class TelegramApp(App):
                 lines.append(f"{pad}[dim italic]> {safe_reply_sender}: {safe_reply_text}[/dim italic]")
 
             num = f"[dim]{num_str}[/dim] "
+
+            # Get reactions for this message (if enabled)
+            reactions = self._format_reactions(msg) if self.show_reactions else ""
+
             if is_out:
-                lines.append(f"{num}[dim]{timestamp}[/dim] [bold green]{safe_name}[/bold green]: {wrapped}")
+                msg_line = f"{num}[dim]{timestamp}[/dim] [bold green]{safe_name}[/bold green]: {wrapped}"
             else:
-                lines.append(f"{num}[dim]{timestamp}[/dim] [bold cyan]{safe_name}[/bold cyan]: {wrapped}")
+                msg_line = f"{num}[dim]{timestamp}[/dim] [bold cyan]{safe_name}[/bold cyan]: {wrapped}"
+
+            # Add reactions right-aligned if present
+            if reactions:
+                # Calculate visible length (without markup)
+                # Get the first line only for padding calculation
+                first_line = msg_line.split("\n")[0] if "\n" in msg_line else msg_line
+                # Rough estimate of visible chars (strip markup)
+                import re
+                visible_text = re.sub(r'\[/?[^\]]+\]', '', first_line)
+                visible_len = len(visible_text)
+                reactions_len = len(reactions) + 2  # +2 for brackets
+
+                # If there's room, add reactions on the same line
+                if visible_len + reactions_len + 2 < width:
+                    padding = width - visible_len - reactions_len
+                    if "\n" in msg_line:
+                        # Multi-line: add reactions to first line
+                        parts = msg_line.split("\n", 1)
+                        msg_line = f"{parts[0]}{' ' * padding}[dim]{reactions}[/dim]\n{parts[1]}"
+                    else:
+                        msg_line = f"{msg_line}{' ' * padding}[dim]{reactions}[/dim]"
+                else:
+                    # Not enough room, add on next line right-aligned
+                    padding = width - reactions_len
+                    msg_line = f"{msg_line}\n{' ' * padding}[dim]{reactions}[/dim]"
+
+            lines.append(msg_line)
         return "\n".join(lines)
 
     def _display_messages_in_pane(self, chat_id: int, msg_data: list, pane: ChatPane):
         try:
             pane.msg_data = msg_data
             chat_info = self.chats[chat_id]
-            pane.set_chat_header(chat_info['name'], chat_info['username'])
+            pinned = chat_info.get('pinned')
+            pinned_text = None
+            if pinned and pinned.text:
+                pinned_text = pinned.text[:60] + "..." if len(pinned.text) > 60 else pinned.text
+            online_status = chat_info.get('online_status', '')
+            pane.set_chat_header(chat_info['name'], chat_info['username'], pinned_text, online_status)
             pane.set_messages(self._format_messages(msg_data, pane))
         except Exception as e:
             _log(f"Display error: {e}", "ERROR")
@@ -900,6 +1070,11 @@ class TelegramApp(App):
         try:
             sender = await msg.get_sender()
             if sender:
+                # Check for alias first
+                sender_id = sender.id if hasattr(sender, 'id') else None
+                if sender_id and sender_id in self.aliases:
+                    return self.aliases[sender_id]
+
                 if isinstance(sender, User):
                     name = sender.first_name or ""
                     if sender.last_name:
@@ -913,6 +1088,52 @@ class TelegramApp(App):
 
     async def _load_and_resolve(self, entity, chat_id: int):
         messages = await self.client.get_messages(entity, limit=50)
+
+        # Get pinned message if any
+        pinned_msg = None
+        try:
+            # Try to get pinned message from dialog
+            dialog = await self.client.get_entity(entity)
+            if hasattr(dialog, 'pinned_msg_id') and dialog.pinned_msg_id:
+                pinned_msg = await self.client.get_messages(entity, ids=dialog.pinned_msg_id)
+        except Exception:
+            pass
+
+        # Store pinned message in chat info
+        if chat_id in self.chats:
+            self.chats[chat_id]['pinned'] = pinned_msg
+
+        # Get online status for users
+        online_status = ""
+        try:
+            if isinstance(entity, User):
+                if entity.bot:
+                    online_status = "bot"
+                elif hasattr(entity, 'status'):
+                    from telethon.tl.types import UserStatusOnline, UserStatusOffline, UserStatusRecently
+                    status = entity.status
+                    if isinstance(status, UserStatusOnline):
+                        online_status = "green]online[/green"
+                    elif isinstance(status, UserStatusRecently):
+                        online_status = "yellow]recently[/yellow"
+                    elif isinstance(status, UserStatusOffline):
+                        if hasattr(status, 'was_online'):
+                            from datetime import datetime
+                            diff = datetime.now(status.was_online.tzinfo) - status.was_online
+                            if diff.days > 0:
+                                online_status = f"dim]last seen {diff.days}d ago[/dim"
+                            elif diff.seconds > 3600:
+                                online_status = f"dim]last seen {diff.seconds // 3600}h ago[/dim"
+                            else:
+                                online_status = f"dim]last seen {diff.seconds // 60}m ago[/dim"
+                        else:
+                            online_status = "dim]offline[/dim"
+        except Exception:
+            pass
+
+        if chat_id in self.chats:
+            self.chats[chat_id]['online_status'] = online_status
+
         msg_by_id = {m.id: m for m in messages}
         sender_cache = {}
         for msg in messages:
@@ -944,6 +1165,13 @@ class TelegramApp(App):
                         pass
             msg_data.append((msg, sender_name, msg.out, reply_info))
         self.messages[chat_id] = messages
+
+        # Get unread count for this chat
+        unread_count = 0
+        if chat_id in self.chats:
+            unread_count = self.chats[chat_id].get('unread', 0)
+            self.chats[chat_id]['unread_count_at_load'] = unread_count
+
         return msg_data
 
     def schedule_load_messages(self, chat_id: int, pane: ChatPane):
@@ -977,6 +1205,26 @@ class TelegramApp(App):
 
         if text.startswith("/media ") or text.startswith("/m "):
             self._handle_media_command(text, pane)
+            event.input.value = ""
+            return
+
+        if text.startswith("/edit ") or text.startswith("/e "):
+            self._handle_edit_command(text, pane)
+            event.input.value = ""
+            return
+
+        if text.startswith("/delete ") or text.startswith("/del ") or text.startswith("/d "):
+            self._handle_delete_command(text, pane)
+            event.input.value = ""
+            return
+
+        if text.startswith("/alias "):
+            self._handle_alias_command(text, pane)
+            event.input.value = ""
+            return
+
+        if text.startswith("/unalias "):
+            self._handle_unalias_command(text, pane)
             event.input.value = ""
             return
 
@@ -1096,6 +1344,231 @@ class TelegramApp(App):
 
         self.notify(f"Downloading media from #{num}...", severity="info")
         self._download_and_open_media(msg, pane)
+
+    def _handle_edit_command(self, text: str, pane: ChatPane) -> None:
+        """Handle /edit N new_text or /e N new_text command."""
+        parts = text.split(maxsplit=2)
+        if len(parts) < 3:
+            self.notify("Usage: /edit N new_text or /e N new_text", severity="warning")
+            return
+
+        try:
+            num = int(parts[1])
+        except ValueError:
+            self.notify("Usage: /edit N new_text", severity="warning")
+            return
+
+        new_text = parts[2]
+
+        if not pane.msg_data:
+            self.notify("No messages loaded", severity="warning")
+            return
+
+        if num < 1 or num > len(pane.msg_data):
+            self.notify(f"Message #{num} not found", severity="warning")
+            return
+
+        msg = pane.msg_data[num - 1][0]
+        is_own = pane.msg_data[num - 1][2]
+
+        if not is_own:
+            self.notify("You can only edit your own messages", severity="warning")
+            return
+
+        if not msg.text:
+            self.notify("Cannot edit media-only messages", severity="warning")
+            return
+
+        self._edit_message(msg, new_text, pane)
+
+    def _edit_message(self, msg, new_text: str, pane: ChatPane) -> None:
+        """Edit a message."""
+        if not self.client or not self.telegram_loop:
+            self.notify("Telegram connection not ready", severity="error")
+            return
+
+        chat_id = pane.chat_id
+        entity = self.chats[chat_id]['entity']
+
+        async def _edit():
+            try:
+                await self.client.edit_message(entity, msg, new_text)
+                msg_data = await self._load_and_resolve(entity, chat_id)
+                self.call_from_thread(lambda: self._display_messages_in_pane(chat_id, msg_data, pane))
+                self.call_from_thread(lambda: self.notify("Message edited", severity="success"))
+            except Exception as e:
+                _log(f"Edit failed: {e}", "ERROR")
+                err_msg = str(e)
+                self.call_from_thread(lambda err=err_msg: self.notify(f"Edit failed: {err}", severity="error"))
+
+        asyncio.run_coroutine_threadsafe(_edit(), self.telegram_loop)
+
+    def _handle_alias_command(self, text: str, pane: ChatPane) -> None:
+        """Handle /alias N name command to set a display alias for a user."""
+        parts = text.split(maxsplit=2)
+        if len(parts) < 3:
+            self.notify("Usage: /alias N name (where N is message number)", severity="warning")
+            return
+
+        try:
+            num = int(parts[1])
+        except ValueError:
+            self.notify("Usage: /alias N name", severity="warning")
+            return
+
+        alias_name = parts[2].strip()
+        if not alias_name:
+            self.notify("Alias name cannot be empty", severity="warning")
+            return
+
+        if not pane.msg_data:
+            self.notify("No messages loaded", severity="warning")
+            return
+
+        if num < 1 or num > len(pane.msg_data):
+            self.notify(f"Message #{num} not found", severity="warning")
+            return
+
+        msg = pane.msg_data[num - 1][0]
+
+        # Get the sender ID
+        sender_id = None
+        if msg.out:
+            self.notify("Cannot alias yourself", severity="warning")
+            return
+
+        # Try multiple ways to get sender ID
+        if hasattr(msg, 'sender_id') and msg.sender_id:
+            sender_id = msg.sender_id
+        elif hasattr(msg, 'from_id') and msg.from_id:
+            if hasattr(msg.from_id, 'user_id'):
+                sender_id = msg.from_id.user_id
+            elif hasattr(msg.from_id, 'channel_id'):
+                sender_id = msg.from_id.channel_id
+            elif isinstance(msg.from_id, int):
+                sender_id = msg.from_id
+
+        if not sender_id:
+            self.notify("Could not identify sender", severity="warning")
+            return
+
+        # Get original name for confirmation
+        original_name = pane.msg_data[num - 1][1]
+
+        # Set the alias
+        self.aliases[sender_id] = alias_name
+        self.save_aliases()
+
+        self.notify(f"Alias set: {original_name} -> {alias_name}", severity="success")
+
+        # Refresh the chat to show new alias
+        if pane.chat_id:
+            self.schedule_load_messages(pane.chat_id, pane)
+
+    def _handle_unalias_command(self, text: str, pane: ChatPane) -> None:
+        """Handle /unalias N command to remove an alias."""
+        parts = text.split(maxsplit=1)
+        if len(parts) < 2:
+            self.notify("Usage: /unalias N (where N is message number)", severity="warning")
+            return
+
+        try:
+            num = int(parts[1])
+        except ValueError:
+            self.notify("Usage: /unalias N", severity="warning")
+            return
+
+        if not pane.msg_data:
+            self.notify("No messages loaded", severity="warning")
+            return
+
+        if num < 1 or num > len(pane.msg_data):
+            self.notify(f"Message #{num} not found", severity="warning")
+            return
+
+        msg = pane.msg_data[num - 1][0]
+
+        # Get the sender ID - try multiple ways
+        sender_id = None
+        if hasattr(msg, 'sender_id') and msg.sender_id:
+            sender_id = msg.sender_id
+        elif hasattr(msg, 'from_id') and msg.from_id:
+            if hasattr(msg.from_id, 'user_id'):
+                sender_id = msg.from_id.user_id
+            elif hasattr(msg.from_id, 'channel_id'):
+                sender_id = msg.from_id.channel_id
+            elif isinstance(msg.from_id, int):
+                sender_id = msg.from_id
+
+        if not sender_id:
+            self.notify("Could not identify sender", severity="warning")
+            return
+
+        if sender_id not in self.aliases:
+            self.notify("No alias set for this user", severity="warning")
+            return
+
+        old_alias = self.aliases[sender_id]
+        del self.aliases[sender_id]
+        self.save_aliases()
+
+        self.notify(f"Alias removed: {old_alias}", severity="success")
+
+        # Refresh the chat to show original name
+        if pane.chat_id:
+            self.schedule_load_messages(pane.chat_id, pane)
+
+    def _handle_delete_command(self, text: str, pane: ChatPane) -> None:
+        """Handle /delete N or /del N or /d N command."""
+        parts = text.split(maxsplit=1)
+        if len(parts) < 2:
+            self.notify("Usage: /delete N or /del N or /d N", severity="warning")
+            return
+
+        try:
+            num = int(parts[1])
+        except ValueError:
+            self.notify("Usage: /delete N (where N is the message number)", severity="warning")
+            return
+
+        if not pane.msg_data:
+            self.notify("No messages loaded", severity="warning")
+            return
+
+        if num < 1 or num > len(pane.msg_data):
+            self.notify(f"Message #{num} not found", severity="warning")
+            return
+
+        msg = pane.msg_data[num - 1][0]
+        is_own = pane.msg_data[num - 1][2]
+
+        if not is_own:
+            self.notify("You can only delete your own messages", severity="warning")
+            return
+
+        self._delete_message(msg, pane)
+
+    def _delete_message(self, msg, pane: ChatPane) -> None:
+        """Delete a message."""
+        if not self.client or not self.telegram_loop:
+            self.notify("Telegram connection not ready", severity="error")
+            return
+
+        chat_id = pane.chat_id
+        entity = self.chats[chat_id]['entity']
+
+        async def _delete():
+            try:
+                await self.client.delete_messages(entity, msg)
+                msg_data = await self._load_and_resolve(entity, chat_id)
+                self.call_from_thread(lambda: self._display_messages_in_pane(chat_id, msg_data, pane))
+                self.call_from_thread(lambda: self.notify("Message deleted", severity="success"))
+            except Exception as e:
+                _log(f"Delete failed: {e}", "ERROR")
+                err_msg = str(e)
+                self.call_from_thread(lambda err=err_msg: self.notify(f"Delete failed: {err}", severity="error"))
+
+        asyncio.run_coroutine_threadsafe(_delete(), self.telegram_loop)
 
     def _download_and_open_media(self, msg, pane: ChatPane):
         """Download media and open it with system default application."""
@@ -1357,6 +1830,16 @@ class TelegramApp(App):
     def action_clear(self):
         if self.active_pane:
             self.active_pane.set_messages("")
+
+    def action_toggle_reactions(self):
+        """Toggle display of message reactions."""
+        self.show_reactions = not self.show_reactions
+        status = "ON" if self.show_reactions else "OFF"
+        self.notify(f"Reactions: {status}", severity="info")
+        # Refresh all panes to apply the change
+        for pane in self.panes:
+            if pane.chat_id and pane.msg_data:
+                pane.set_messages(self._format_messages(pane.msg_data, pane))
 
     async def action_quit(self):
         self.save_layout()
