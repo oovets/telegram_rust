@@ -21,10 +21,14 @@ A terminal/TUI client for Telegram built with Python, Textual and Telethon.
 - Typing indicator when someone is typing
 - Unread message marker line
 - Message reactions display (right-aligned)
-- Spotify link detection when using shorting URL service
+- YouTube and Spotify link detection with title preview
 - User aliases (shorten long names)
 - Message filtering (by sender, media type, links)
 - Search in message history
+- Desktop notifications (macOS/Linux)
+- Command autocomplete (Tab)
+- Group management (create, add/remove members)
+- Colored media type indicators
 
 ## Installation
 
@@ -68,7 +72,10 @@ python telegram_client.py
 | `Ctrl+R` | Refresh conversations |
 | `Ctrl+L` | Clear current pane |
 | `Ctrl+E` | Toggle reactions on/off |
+| `Ctrl+N` | Toggle desktop notifications |
+| `Ctrl+D` | Toggle compact mode (spacing between messages) |
 | `Ctrl+Q` | Quit (saves layout) |
+| `Tab` | Autocomplete commands (when typing /) |
 
 ## Commands
 
@@ -85,6 +92,10 @@ python telegram_client.py
 | `/search <query>` or `/s <query>` | Search message history |
 | `/new @username` | Start new chat with user |
 | `/newgroup <name>` | Create a new group |
+| `/add @username` | Add member to current group |
+| `/kick @username` or `/remove @username` | Remove member from group |
+| `/members` | List members in current group |
+| `/forward N @target` or `/fwd N @target` | Forward message #N to @target |
 
 ## Configuration Files
 
@@ -113,6 +124,5 @@ python telegram_client.py
 
 ## Future Improvements
 
-- [ ] Desktop notifications
-- [ ] Inline media preview (ASCII art)
-- [ ] Add/remove members from groups
+- [ ] Voice message playback
+- [ ] Pin/unpin messages

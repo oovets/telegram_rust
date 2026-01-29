@@ -37,7 +37,9 @@ from textual.widgets import Header, Input, ListItem, ListView, Static
 
 from telethon import TelegramClient, events
 from telethon.tl.types import Channel, Chat, User
-from telethon.tl.functions.messages import CreateChatRequest
+from telethon.tl.functions.messages import CreateChatRequest, AddChatUserRequest
+from telethon.tl.functions.channels import InviteToChannelRequest, EditBannedRequest
+from telethon.tl.types import ChatBannedRights
 
 # Configuration
 DEBUG_MODE = os.environ.get("TELEGRAM_DEBUG", "").lower() in ("1", "true", "yes")
@@ -442,6 +444,8 @@ class TelegramApp(App):
         Binding("ctrl+b", "split_horizontal", "Split H", priority=True),
         Binding("ctrl+w", "close_pane", "Close pane", priority=True),
         Binding("ctrl+e", "toggle_reactions", "Toggle reactions", priority=True),
+        Binding("ctrl+n", "toggle_notifications", "Toggle notifications", priority=True),
+        Binding("ctrl+d", "toggle_compact", "Toggle compact mode", priority=True),
     ]
 
     TITLE = "Telegram Terminal Client"
@@ -463,6 +467,13 @@ class TelegramApp(App):
         "/s ",
         "/new ",
         "/newgroup ",
+        "/add ",
+        "/kick ",
+        "/remove ",
+        "/members",
+        "/forward ",
+        "/fwd ",
+        "/f ",
     ]
 
     def __init__(self):
@@ -484,6 +495,8 @@ class TelegramApp(App):
         self.running = True
         self.aliases: Dict[int, str] = {}  # user_id -> alias name
         self.show_reactions: bool = True  # Toggle for showing reactions
+        self.desktop_notifications: bool = True  # Toggle for desktop notifications
+        self.compact_mode: bool = True  # Toggle for compact message display
 
         self.panes: list = []
         self.active_pane: Optional[ChatPane] = None
@@ -944,30 +957,63 @@ class TelegramApp(App):
         return ""
 
     def _get_media_label(self, msg) -> str:
-        # Check for Spotify links (they come with a photo preview)
-        if msg.text and "open.spotify.com" in msg.text:
-            return "[Spotify]"
+        # Helper to get title from webpage
+        def get_webpage_title(webpage, max_len=40):
+            if hasattr(webpage, 'title') and webpage.title:
+                title = webpage.title[:max_len].replace("[", "\\[")
+                if len(webpage.title) > max_len:
+                    title += "..."
+                return title
+            return None
+
+        # Check for webpage preview first (YouTube, Spotify, etc.)
+        if hasattr(msg, 'media') and hasattr(msg.media, 'webpage') and msg.media.webpage:
+            webpage = msg.media.webpage
+            site_name = getattr(webpage, 'site_name', '') or ''
+            url = getattr(webpage, 'url', '') or ''
+
+            # YouTube
+            if site_name == "YouTube" or "youtube.com" in url or "youtu.be" in url:
+                title = get_webpage_title(webpage)
+                if title:
+                    return f"[bold red]\\[YouTube: {title}][/bold red]"
+                return "[bold red]\\[YouTube][/bold red]"
+
+            # Spotify
+            if site_name == "Spotify" or "spotify.com" in url:
+                title = get_webpage_title(webpage)
+                if title:
+                    return f"[bold green]\\[Spotify: {title}][/bold green]"
+                return "[bold green]\\[Spotify][/bold green]"
+
+        # Check text for links without preview
+        if msg.text:
+            if "youtube.com" in msg.text or "youtu.be" in msg.text:
+                return "[bold red]\\[YouTube][/bold red]"
+            if "open.spotify.com" in msg.text:
+                return "[bold green]\\[Spotify][/bold green]"
+
         if msg.photo:
-            # Check if this is a web page preview with Spotify
-            if hasattr(msg, 'media') and hasattr(msg.media, 'webpage'):
-                webpage = msg.media.webpage
-                if hasattr(webpage, 'url') and webpage.url and "spotify.com" in webpage.url:
-                    return "[Spotify]"
-                if hasattr(webpage, 'site_name') and webpage.site_name == "Spotify":
-                    return "[Spotify]"
-            return "[Photo]"
+            return "[bold blue]\\[Photo][/bold blue]"
         elif msg.video:
-            return "[Video]"
+            return "[bold magenta]\\[Video][/bold magenta]"
         elif msg.audio:
-            return "[Audio]"
+            return "[bold yellow]\\[Audio][/bold yellow]"
         elif msg.voice:
-            return "[Voice message]"
+            return "[bold yellow]\\[Voice][/bold yellow]"
         elif msg.video_note:
-            return "[Video note]"
+            return "[bold magenta]\\[Video note][/bold magenta]"
         elif msg.sticker:
-            return "[Sticker]"
+            # Try to get sticker emoji
+            emoji = ""
+            if hasattr(msg.sticker, 'attributes'):
+                for attr in msg.sticker.attributes:
+                    if hasattr(attr, 'alt') and attr.alt:
+                        emoji = f" {attr.alt}"
+                        break
+            return f"[bold cyan]\\[Sticker{emoji}][/bold cyan]"
         elif msg.gif:
-            return "[GIF]"
+            return "[bold magenta]\\[GIF][/bold magenta]"
         elif msg.document:
             name = ""
             if hasattr(msg.document, 'attributes'):
@@ -975,13 +1021,29 @@ class TelegramApp(App):
                     if hasattr(attr, 'file_name') and attr.file_name:
                         name = attr.file_name
                         break
-            return f"[Document: {name}]" if name else "[Document]"
+            if name:
+                safe_name = name.replace("[", "\\[")
+                return f"[bold white]\\[Doc: {safe_name}][/bold white]"
+            return "[bold white]\\[Document][/bold white]"
         elif msg.contact:
-            return "[Contact]"
+            contact_name = ""
+            if hasattr(msg.contact, 'first_name'):
+                contact_name = msg.contact.first_name
+                if hasattr(msg.contact, 'last_name') and msg.contact.last_name:
+                    contact_name += f" {msg.contact.last_name}"
+            if contact_name:
+                safe_contact = contact_name.replace("[", "\\[")
+                return f"[bold cyan]\\[Contact: {safe_contact}][/bold cyan]"
+            return "[bold cyan]\\[Contact][/bold cyan]"
         elif msg.geo:
-            return "[Location]"
+            return "[bold green]\\[Location][/bold green]"
         elif msg.poll:
-            return "[Poll]"
+            poll_question = ""
+            if hasattr(msg.poll, 'poll') and hasattr(msg.poll.poll, 'question'):
+                poll_question = msg.poll.poll.question[:30].replace("[", "\\[")
+            if poll_question:
+                return f"[bold yellow]\\[Poll: {poll_question}][/bold yellow]"
+            return "[bold yellow]\\[Poll][/bold yellow]"
         return ""
 
     def _format_messages(self, msg_data: list, pane: ChatPane) -> str:
@@ -1025,25 +1087,34 @@ class TelegramApp(App):
 
             media_label = self._get_media_label(msg)
             text = msg.text or ""
-            if media_label:
-                text = f"{media_label} {text}" if text else media_label
-            if not text:
+            if not text and not media_label:
                 continue
 
             timestamp = msg.date.strftime("%H:%M")
             safe_name = sender_name.replace("[", "\\[")
             num_str = f"#{idx + 1}"
             prefix_len = len(num_str) + 1 + len(timestamp) + 1 + len(sender_name) + 2
-            text = self._shorten_urls_in_text(text)
-            safe_text = text.replace("[", "\\[")
-            wrapped = self._wrap_text(safe_text, prefix_len, width)
 
+            # Escape and wrap the message text (not the media label)
+            if text:
+                text = self._shorten_urls_in_text(text)
+                safe_text = text.replace("[", "\\[")
+                wrapped = self._wrap_text(safe_text, prefix_len, width)
+                if media_label:
+                    wrapped = f"{media_label} {wrapped}"
+            else:
+                wrapped = media_label
+
+            # Handle replies with arrow pointing up
+            reply_arrow = ""
             if reply_info:
                 reply_sender, reply_text = reply_info
+                # Only show first line of reply
+                reply_text = reply_text.split("\n")[0]
                 safe_reply_sender = reply_sender.replace("[", "\\[")
                 safe_reply_text = reply_text.replace("[", "\\[")
-                pad = " " * prefix_len
-                lines.append(f"{pad}[dim italic]> {safe_reply_sender}: {safe_reply_text}[/dim italic]")
+                lines.append(f"[dim italic]> {safe_reply_sender}: {safe_reply_text}[/dim italic]")
+                reply_arrow = "[dim]^[/dim] "  # Arrow pointing up to the quoted text
 
             num = f"[dim]{num_str}[/dim] "
 
@@ -1051,9 +1122,9 @@ class TelegramApp(App):
             reactions = self._format_reactions(msg) if self.show_reactions else ""
 
             if is_out:
-                msg_line = f"{num}[dim]{timestamp}[/dim] [bold green]{safe_name}[/bold green]: {wrapped}"
+                msg_line = f"{num}[dim]{timestamp}[/dim] {reply_arrow}[bold green]{safe_name}[/bold green]: {wrapped}"
             else:
-                msg_line = f"{num}[dim]{timestamp}[/dim] [bold cyan]{safe_name}[/bold cyan]: {wrapped}"
+                msg_line = f"{num}[dim]{timestamp}[/dim] {reply_arrow}[bold cyan]{safe_name}[/bold cyan]: {wrapped}"
 
             # Add reactions right-aligned if present
             if reactions:
@@ -1081,6 +1152,11 @@ class TelegramApp(App):
                     msg_line = f"{msg_line}\n{' ' * padding}[dim]{reactions}[/dim]"
 
             lines.append(msg_line)
+
+            # Add blank line between messages in normal mode (not compact)
+            if not self.compact_mode:
+                lines.append("")
+
         return "\n".join(lines)
 
     def _display_messages_in_pane(self, chat_id: int, msg_data: list, pane: ChatPane):
@@ -1278,6 +1354,26 @@ class TelegramApp(App):
 
         if text.startswith("/newgroup "):
             self._handle_new_group_command(text, pane)
+            event.input.value = ""
+            return
+
+        if text.startswith("/add "):
+            self._handle_add_member_command(text, pane)
+            event.input.value = ""
+            return
+
+        if text.startswith("/kick ") or text.startswith("/remove "):
+            self._handle_remove_member_command(text, pane)
+            event.input.value = ""
+            return
+
+        if text.startswith("/members"):
+            self._handle_members_command(text, pane)
+            event.input.value = ""
+            return
+
+        if text.startswith("/forward ") or text.startswith("/fwd ") or text.startswith("/f "):
+            self._handle_forward_command(text, pane)
             event.input.value = ""
             return
 
@@ -1923,6 +2019,236 @@ class TelegramApp(App):
 
         asyncio.run_coroutine_threadsafe(_create(), self.telegram_loop)
 
+    def _handle_add_member_command(self, text: str, pane: ChatPane) -> None:
+        """Handle /add @username command to add member to group."""
+        parts = text.split(maxsplit=1)
+        if len(parts) < 2:
+            self.notify("Usage: /add @username", severity="warning")
+            return
+
+        target = parts[1].strip()
+        if not target:
+            self.notify("Username required", severity="warning")
+            return
+
+        if not pane.chat_id:
+            self.notify("Open a group chat first", severity="warning")
+            return
+
+        chat_info = self.chats.get(pane.chat_id)
+        if not chat_info:
+            self.notify("Chat not found", severity="warning")
+            return
+
+        entity = chat_info['entity']
+        if isinstance(entity, User):
+            self.notify("Cannot add members to private chats", severity="warning")
+            return
+
+        self.notify(f"Adding {target}...", severity="info")
+        self._add_member_to_group(target, pane)
+
+    def _add_member_to_group(self, target: str, pane: ChatPane) -> None:
+        """Add a member to the current group."""
+        if not self.client or not self.telegram_loop:
+            self.notify("Telegram connection not ready", severity="error")
+            return
+
+        chat_id = pane.chat_id
+        entity = self.chats[chat_id]['entity']
+
+        async def _add():
+            try:
+                # Get the user to add
+                user = await self.client.get_entity(target)
+
+                if isinstance(entity, Channel):
+                    # For channels/supergroups
+                    await self.client(InviteToChannelRequest(entity, [user]))
+                else:
+                    # For regular groups
+                    await self.client(AddChatUserRequest(chat_id, user, fwd_limit=50))
+
+                self.call_from_thread(lambda: self.notify(f"Added {target} to group", severity="success"))
+
+            except Exception as e:
+                _log(f"Add member failed: {e}", "ERROR")
+                err_msg = str(e)
+                self.call_from_thread(lambda err=err_msg: self.notify(f"Could not add member: {err}", severity="error"))
+
+        asyncio.run_coroutine_threadsafe(_add(), self.telegram_loop)
+
+    def _handle_remove_member_command(self, text: str, pane: ChatPane) -> None:
+        """Handle /kick or /remove @username command."""
+        parts = text.split(maxsplit=1)
+        if len(parts) < 2:
+            self.notify("Usage: /kick @username or /remove @username", severity="warning")
+            return
+
+        target = parts[1].strip()
+        if not target:
+            self.notify("Username required", severity="warning")
+            return
+
+        if not pane.chat_id:
+            self.notify("Open a group chat first", severity="warning")
+            return
+
+        chat_info = self.chats.get(pane.chat_id)
+        if not chat_info:
+            self.notify("Chat not found", severity="warning")
+            return
+
+        entity = chat_info['entity']
+        if isinstance(entity, User):
+            self.notify("Cannot remove members from private chats", severity="warning")
+            return
+
+        self.notify(f"Removing {target}...", severity="info")
+        self._remove_member_from_group(target, pane)
+
+    def _remove_member_from_group(self, target: str, pane: ChatPane) -> None:
+        """Remove a member from the current group."""
+        if not self.client or not self.telegram_loop:
+            self.notify("Telegram connection not ready", severity="error")
+            return
+
+        chat_id = pane.chat_id
+        entity = self.chats[chat_id]['entity']
+
+        async def _remove():
+            try:
+                # Get the user to remove
+                user = await self.client.get_entity(target)
+
+                if isinstance(entity, Channel):
+                    # For channels/supergroups - ban with all rights revoked
+                    rights = ChatBannedRights(
+                        until_date=None,
+                        view_messages=True  # This effectively kicks them
+                    )
+                    await self.client(EditBannedRequest(entity, user, rights))
+                else:
+                    # For regular groups - use delete user
+                    await self.client.kick_participant(entity, user)
+
+                self.call_from_thread(lambda: self.notify(f"Removed {target} from group", severity="success"))
+
+            except Exception as e:
+                _log(f"Remove member failed: {e}", "ERROR")
+                err_msg = str(e)
+                self.call_from_thread(lambda err=err_msg: self.notify(f"Could not remove member: {err}", severity="error"))
+
+        asyncio.run_coroutine_threadsafe(_remove(), self.telegram_loop)
+
+    def _handle_members_command(self, text: str, pane: ChatPane) -> None:
+        """Handle /members command to list group members."""
+        if not pane.chat_id:
+            self.notify("Open a group chat first", severity="warning")
+            return
+
+        chat_info = self.chats.get(pane.chat_id)
+        if not chat_info:
+            self.notify("Chat not found", severity="warning")
+            return
+
+        entity = chat_info['entity']
+        if isinstance(entity, User):
+            self.notify("This is a private chat, not a group", severity="warning")
+            return
+
+        self.notify("Loading members...", severity="info")
+        self._list_members(pane)
+
+    def _list_members(self, pane: ChatPane) -> None:
+        """List members of the current group."""
+        if not self.client or not self.telegram_loop:
+            self.notify("Telegram connection not ready", severity="error")
+            return
+
+        chat_id = pane.chat_id
+        entity = self.chats[chat_id]['entity']
+
+        async def _list():
+            try:
+                participants = await self.client.get_participants(entity, limit=50)
+
+                member_list = []
+                for p in participants:
+                    name = p.first_name or ""
+                    if p.last_name:
+                        name += f" {p.last_name}"
+                    username = f"@{p.username}" if p.username else ""
+                    member_list.append(f"{name} {username}".strip())
+
+                members_text = f"Members ({len(participants)}):\n" + "\n".join(member_list)
+
+                def show_members():
+                    pane.set_messages(members_text)
+
+                self.call_from_thread(show_members)
+                self.call_from_thread(lambda: self.notify(f"Found {len(participants)} members", severity="success"))
+
+            except Exception as e:
+                _log(f"List members failed: {e}", "ERROR")
+                err_msg = str(e)
+                self.call_from_thread(lambda err=err_msg: self.notify(f"Could not list members: {err}", severity="error"))
+
+        asyncio.run_coroutine_threadsafe(_list(), self.telegram_loop)
+
+    def _handle_forward_command(self, text: str, pane: ChatPane) -> None:
+        """Handle /forward N @target or /fwd N @target or /f N @target command."""
+        parts = text.split(maxsplit=2)
+        if len(parts) < 3:
+            self.notify("Usage: /forward N @username or /fwd N @username", severity="warning")
+            return
+
+        try:
+            num = int(parts[1])
+        except ValueError:
+            self.notify("Usage: /forward N @username (N is message number)", severity="warning")
+            return
+
+        target = parts[2].strip()
+        if not target:
+            self.notify("Target username required", severity="warning")
+            return
+
+        if not pane.msg_data:
+            self.notify("No messages loaded", severity="warning")
+            return
+
+        if num < 1 or num > len(pane.msg_data):
+            self.notify(f"Message #{num} not found", severity="warning")
+            return
+
+        msg = pane.msg_data[num - 1][0]
+        self.notify(f"Forwarding message #{num} to {target}...", severity="info")
+        self._forward_message(msg, target, pane)
+
+    def _forward_message(self, msg, target: str, pane: ChatPane) -> None:
+        """Forward a message to another chat."""
+        if not self.client or not self.telegram_loop:
+            self.notify("Telegram connection not ready", severity="error")
+            return
+
+        async def _forward():
+            try:
+                # Get the target entity
+                target_entity = await self.client.get_entity(target)
+
+                # Forward the message
+                await self.client.forward_messages(target_entity, msg)
+
+                self.call_from_thread(lambda: self.notify(f"Message forwarded to {target}", severity="success"))
+
+            except Exception as e:
+                _log(f"Forward failed: {e}", "ERROR")
+                err_msg = str(e)
+                self.call_from_thread(lambda err=err_msg: self.notify(f"Forward failed: {err}", severity="error"))
+
+        asyncio.run_coroutine_threadsafe(_forward(), self.telegram_loop)
+
     def _handle_delete_command(self, text: str, pane: ChatPane) -> None:
         """Handle /delete N or /del N or /d N command."""
         parts = text.split(maxsplit=1)
@@ -2094,7 +2420,10 @@ class TelegramApp(App):
         else:
             self.chats[chat_id]['unread'] = self.chats[chat_id].get('unread', 0) + 1
             chat_name = self.chats[chat_id].get('name', 'Unknown')
-            preview = event.message.text[:30] if event.message.text else "[Media]"
+            preview = event.message.text[:50] if event.message.text else "[Media]"
+
+            # Send desktop notification for new messages not in view
+            self._send_desktop_notification(chat_name, preview)
 
             def _update_sidebar():
                 try:
@@ -2245,6 +2574,44 @@ class TelegramApp(App):
         for pane in self.panes:
             if pane.chat_id and pane.msg_data:
                 pane.set_messages(self._format_messages(pane.msg_data, pane))
+
+    def action_toggle_notifications(self):
+        """Toggle desktop notifications."""
+        self.desktop_notifications = not self.desktop_notifications
+        status = "ON" if self.desktop_notifications else "OFF"
+        self.notify(f"Desktop notifications: {status}", severity="info")
+
+    def action_toggle_compact(self):
+        """Toggle compact mode (no spacing between messages)."""
+        self.compact_mode = not self.compact_mode
+        status = "ON" if self.compact_mode else "OFF"
+        self.notify(f"Compact mode: {status}", severity="info")
+        # Refresh all panes to apply the change
+        for pane in self.panes:
+            if pane.chat_id and pane.msg_data:
+                pane.set_messages(self._format_messages(pane.msg_data, pane))
+
+    def _send_desktop_notification(self, title: str, message: str) -> None:
+        """Send a desktop notification."""
+        if not self.desktop_notifications:
+            return
+
+        import subprocess
+        import platform
+
+        try:
+            system = platform.system()
+            if system == "Darwin":  # macOS
+                # Escape quotes in message
+                safe_title = title.replace('"', '\\"')
+                safe_msg = message.replace('"', '\\"')
+                script = f'display notification "{safe_msg}" with title "{safe_title}"'
+                subprocess.run(["osascript", "-e", script], capture_output=True)
+            elif system == "Linux":
+                subprocess.run(["notify-send", title, message], capture_output=True)
+            # Windows would need win10toast or similar
+        except Exception:
+            pass
 
     async def action_quit(self):
         self.save_layout()
