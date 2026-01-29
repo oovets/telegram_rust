@@ -5,30 +5,17 @@ A terminal/TUI client for Telegram built with Python, Textual and Telethon.
 ## Features
 
 - Full terminal/TUI client (no GUI, works over SSH)
-- Modern terminal UI with Textual framework
 - Split panes - view multiple conversations simultaneously
-- Real-time message sending and receiving
-- Message history with reply support
-- Edit and delete your own messages
 - Media download and viewing (photos, videos, documents, etc.)
-- Session management (saves login)
 - Two-factor authentication support
 - Layout persistence (remembers your splits and open chats)
-- Word-wrap at word boundaries for better readability
 - URL shortening for long links
-- Pinned message display in chat header
-- Online status indicator for users
-- Typing indicator when someone is typing
-- Unread message marker line
-- Message reactions display (right-aligned)
+- Message reactions display
 - YouTube and Spotify link detection with title preview
 - User aliases (shorten long names)
 - Message filtering (by sender, media type, links)
 - Search in message history
 - Desktop notifications (macOS/Linux)
-- Command autocomplete (Tab)
-- Group management (create, add/remove members)
-- Colored media type indicators
 
 ## Installation
 
