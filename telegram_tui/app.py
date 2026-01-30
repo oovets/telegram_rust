@@ -114,6 +114,9 @@ class TelegramApp(App):
         self.history_index: int = -1
         self.history_temp: str = ""  # Temporary storage for current input
 
+        # Performance optimization: debounce resize
+        self._resize_timer = None
+
         self.load_config()
         self.load_layout()
         self.load_aliases()
@@ -491,6 +494,22 @@ class TelegramApp(App):
         if width < 20:
             width = 80
 
+        # Check cache first
+        cache_key = (
+            width,
+            self.compact_mode,
+            self.show_emojis,
+            self.show_reactions,
+            self.show_timestamps,
+            self.show_line_numbers,
+            len(msg_data),  # Include message count to invalidate on new messages
+            pane.filter_type,
+            pane.filter_value
+        )
+        
+        if cache_key in pane._format_cache:
+            return pane._format_cache[cache_key]
+
         # Get unread count to show marker
         unread_count = 0
         if pane.chat_id and pane.chat_id in self.chats:
@@ -586,7 +605,19 @@ class TelegramApp(App):
             if not self.compact_mode:
                 lines.append("")
 
-        return "\n".join(lines)
+        result = "\n".join(lines)
+        
+        # Store in cache
+        pane._format_cache[cache_key] = result
+        
+        # Limit cache size to prevent memory issues
+        if len(pane._format_cache) > 10:
+            # Remove oldest entries (keep last 10)
+            keys = list(pane._format_cache.keys())
+            for old_key in keys[:-10]:
+                del pane._format_cache[old_key]
+        
+        return result
 
     def _display_messages_in_pane(self, chat_id: int, msg_data: list, pane: ChatPane):
         try:
@@ -938,15 +969,22 @@ class TelegramApp(App):
                 inp.focus()
 
     def on_resize(self, event) -> None:
-        """Redraw messages when window is resized."""
-        def redraw_panes(_delay=None):
-            for pane in self.panes:
-                try:
-                    if pane.chat_id and pane.msg_data:
-                        pane.set_messages(self._format_messages(pane.msg_data, pane))
-                except Exception:
-                    pass
-        self.call_later(redraw_panes, 0.1)
+        """Redraw messages when window is resized (debounced)."""
+        # Cancel previous timer if exists
+        if self._resize_timer is not None:
+            self._resize_timer.stop()
+        
+        # Set new timer - only redraw after 200ms of no resize events
+        self._resize_timer = self.set_timer(0.2, self._do_resize)
+    
+    def _do_resize(self) -> None:
+        """Actually perform the resize redraw."""
+        for pane in self.panes:
+            try:
+                if pane.chat_id and pane.msg_data:
+                    pane.set_messages(self._format_messages(pane.msg_data, pane))
+            except Exception:
+                pass
 
     def _handle_reply_command(self, text: str, pane: ChatPane):
         # Parse: /reply N or /reply N message text
@@ -1898,10 +1936,12 @@ class TelegramApp(App):
                 await self.client.send_read_acknowledge(entity)
                 self.chats[chat_id]['unread'] = 0
 
-                for pane in matching_panes:
-                    def update_pane(p=pane, d=msg_data, cid=chat_id):
-                        self._display_messages_in_pane(cid, d, p)
-                    self.call_from_thread(update_pane)
+                # Batch update all matching panes at once for better performance
+                def batch_update():
+                    for pane in matching_panes:
+                        self._display_messages_in_pane(chat_id, msg_data, pane)
+                
+                self.call_from_thread(batch_update)
             except Exception as e:
                 _log(f"Failed to load in on_new_message: {e}", "ERROR")
         else:

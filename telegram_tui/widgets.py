@@ -63,6 +63,9 @@ class ChatPane(Vertical):
         self.reply_to_message: Optional[int] = None
         self.filter_type: Optional[str] = None  # None, "sender", "media", "link"
         self.filter_value: Optional[str] = None  # sender name or media type
+        
+        # Performance optimization: cache formatted messages
+        self._format_cache: Dict = {}  # (width, compact, emojis, reactions, timestamps, line_nums) -> formatted_text
 
     def compose(self):
         yield Static("", classes="pane-header")
@@ -175,8 +178,13 @@ class ChatList(Vertical):
         if isinstance(event.item, ChatListItem):
             self.post_message(ChatSelected(event.item.chat_id))
 
-    def update_chats(self, chats: Dict[int, Dict]) -> None:
-        """Update the chat list with new data."""
+    def update_chats(self, chats: Dict[int, Dict], lazy: bool = True) -> None:
+        """Update the chat list with new data.
+        
+        Args:
+            chats: Dictionary of chat_id -> chat_info
+            lazy: If True, only load first 30 chats initially (performance optimization)
+        """
         self.chats = chats
         self.chat_items.clear()
 
@@ -202,7 +210,11 @@ class ChatList(Vertical):
                 return datetime.min.replace(tzinfo=None)
 
             sorted_chats = sorted(chats.items(), key=get_sort_key, reverse=True)
-            for chat_id, chat_info in sorted_chats:
+            
+            # Lazy loading: only load first 30 chats initially for better performance
+            load_count = 30 if lazy and len(sorted_chats) > 30 else len(sorted_chats)
+            
+            for chat_id, chat_info in sorted_chats[:load_count]:
                 try:
                     item = ChatListItem(chat_id, chat_info)
                     self.chat_items[chat_id] = item
@@ -211,6 +223,22 @@ class ChatList(Vertical):
                     pass
 
             self.chat_list_view.refresh()
+            
+            # If lazy loading, schedule remaining chats to load after a short delay
+            if lazy and len(sorted_chats) > load_count:
+                def load_remaining():
+                    for chat_id, chat_info in sorted_chats[load_count:]:
+                        try:
+                            item = ChatListItem(chat_id, chat_info)
+                            self.chat_items[chat_id] = item
+                            self.chat_list_view.append(item)
+                        except Exception:
+                            pass
+                    self.chat_list_view.refresh()
+                
+                # Load remaining after 500ms
+                self.set_timer(0.5, load_remaining)
+                
         except Exception as e:
             _log(f"Failed to update chat list: {e}", "ERROR")
 
