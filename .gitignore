@@ -10,8 +10,10 @@ telegram_aliases.json
 
 # Backup files
 *.bkup
+*.bkup2
 *.backup
 *.latest
+*.old
 
 # Python
 __pycache__/
