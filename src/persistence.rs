@@ -147,6 +147,9 @@ pub struct AppSettings {
     
     #[serde(default = "default_true")]
     pub show_borders: bool,
+
+    #[serde(default = "default_true")]
+    pub show_chat_list: bool,
 }
 
 impl Default for AppSettings {
@@ -160,6 +163,7 @@ impl Default for AppSettings {
             show_timestamps: true,
             show_user_colors: true,
             show_borders: true,
+            show_chat_list: true,
         }
     }
 }
@@ -180,6 +184,7 @@ impl AppState {
                 show_timestamps: config.settings.show_timestamps,
                 show_user_colors: config.settings.show_user_colors,
                 show_borders: config.settings.show_borders,
+                show_chat_list: config.settings.show_chat_list,
             },
             aliases: Aliases::load(config)?,
             layout: LayoutData::load(config)?,

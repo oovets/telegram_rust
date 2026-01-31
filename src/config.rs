@@ -41,6 +41,9 @@ pub struct Settings {
     
     #[serde(default = "default_true")]
     pub show_borders: bool,
+
+    #[serde(default = "default_true")]
+    pub show_chat_list: bool,
 }
 
 impl Default for Settings {
@@ -54,6 +57,7 @@ impl Default for Settings {
             show_timestamps: true,
             show_user_colors: true,
             show_borders: true,
+            show_chat_list: true,
         }
     }
 }

@@ -3,7 +3,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::Line,
-    widgets::{Block, Borders, List, ListItem, Padding, Paragraph},
+    widgets::{Block, Borders, List, ListItem, Padding, Paragraph, Wrap},
     Frame,
 };
 
@@ -156,7 +156,7 @@ impl App {
             show_emojis: app_state.settings.show_emojis,
             show_line_numbers: app_state.settings.show_line_numbers,
             show_timestamps: app_state.settings.show_timestamps,
-            show_chat_list: true,
+            show_chat_list: app_state.settings.show_chat_list,
             show_user_colors: app_state.settings.show_user_colors,
             show_borders: app_state.settings.show_borders,
             user_colors: std::collections::HashMap::new(),
@@ -449,18 +449,27 @@ impl App {
         is_focused: bool,
     ) {
         let has_reply_preview = pane.reply_preview.is_some();
+
+        // Calculate input height dynamically based on text width
+        let border_overhead = if self.show_borders { 2 } else { 0 };
+        let header_height = if self.show_borders { 3 } else { 1 };
+        let inner_width = area.width.saturating_sub(if self.show_borders { 2 } else { 0 }).max(1) as usize;
+        let input_text_len = if is_focused { pane.input_buffer.len() + 1 } else { 0 }; // +1 for cursor
+        let text_lines = if inner_width > 0 { ((input_text_len as f64) / (inner_width as f64)).ceil().max(1.0) as u16 } else { 1 };
+        let input_height = text_lines + border_overhead + 1; // +1 for spacing below
+
         let constraints = if has_reply_preview {
             vec![
-                Constraint::Length(3),  // header
+                Constraint::Length(header_height),
                 Constraint::Min(0),     // messages
                 Constraint::Length(1),  // reply preview
-                Constraint::Length(3),  // input
+                Constraint::Length(input_height),
             ]
         } else {
             vec![
-                Constraint::Length(3),  // header
+                Constraint::Length(header_height),
                 Constraint::Min(0),     // messages
-                Constraint::Length(3),  // input
+                Constraint::Length(input_height),
             ]
         };
 
@@ -700,7 +709,8 @@ impl App {
             })
             .collect();
 
-        let available_height = chunks[1].height.saturating_sub(2) as usize;
+        let border_lines = if self.show_borders { 2 } else { 1 }; // 1 for spacing above input in borderless
+        let available_height = chunks[1].height.saturating_sub(border_lines) as usize;
         let total_lines = message_lines.len();
         
         let actual_scroll = if pane.scroll_offset == 0 && total_lines > available_height {
@@ -746,7 +756,8 @@ impl App {
             Block::default()
         };
         let input = Paragraph::new(input_text)
-            .block(input_block);
+            .block(input_block)
+            .wrap(Wrap { trim: false });
         f.render_widget(input, input_chunk);
     }
 
@@ -1515,6 +1526,9 @@ impl App {
         config.settings.show_emojis = self.show_emojis;
         config.settings.show_line_numbers = self.show_line_numbers;
         config.settings.show_timestamps = self.show_timestamps;
+        config.settings.show_user_colors = self.show_user_colors;
+        config.settings.show_borders = self.show_borders;
+        config.settings.show_chat_list = self.show_chat_list;
         config.save()?;
 
         Ok(())
