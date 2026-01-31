@@ -540,7 +540,7 @@ impl TelegramClient {
                     let client_lock = client.lock().await;
 
                     match tokio::time::timeout(
-                        std::time::Duration::from_millis(500),
+                        std::time::Duration::from_millis(100),
                         client_lock.next_update(),
                     )
                     .await
@@ -590,7 +590,7 @@ impl TelegramClient {
                         }
                     }
 
-                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
                 }
             });
 

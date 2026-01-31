@@ -156,16 +156,9 @@ impl App {
             show_chat_list: true,
         };
 
-        // Load messages for focused pane at startup (quick, only one pane)
-        // Other panes will load lazily when user switches to them
-        if let Some(pane) = app.panes.get(app.focused_pane_idx) {
-            if let Some(chat_id) = pane.chat_id {
-                if pane.msg_data.is_empty() {
-                    // Load messages for focused pane only - this is fast
-                    let _ = app.refresh_pane_messages(app.focused_pane_idx).await;
-                }
-            }
-        }
+        // Load messages for all panes that have a saved chat_id
+        // This is what we had before - it works better
+        app.load_saved_chat_messages().await?;
 
         Ok(app)
     }

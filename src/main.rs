@@ -56,7 +56,10 @@ async fn run_app<B: ratatui::backend::Backend>(
     loop {
         terminal.draw(|f| app.draw(f))?;
 
-        if event::poll(std::time::Duration::from_millis(100))? {
+        // Process Telegram events FIRST - check for new messages frequently
+        app.process_telegram_events().await?;
+
+        if event::poll(std::time::Duration::from_millis(50))? {
             let event = event::read()?;
             match event {
                 Event::Key(key) => {
@@ -182,10 +185,11 @@ async fn run_app<B: ratatui::backend::Backend>(
                 }
                 _ => {}
             }
+        } else {
+            // No events, but still process Telegram updates (non-blocking)
+            // This ensures we get new messages even when user isn't typing
+            app.process_telegram_events().await?;
         }
-
-        // Process any Telegram events
-        app.process_telegram_events().await?;
     }
 
     Ok(())
