@@ -21,6 +21,7 @@ A fully functional Telegram client in the terminal, written in Rust for maximum 
   - Ctrl+G: Line numbers
   - Ctrl+D: Compact mode
   - Ctrl+S: Chat list (show/hide sidebar)
+  - Ctrl+Y: Toggle borders
 - **Pane Management**:
   - Ctrl+V: Split vertically
   - Ctrl+B: Split horizontally
