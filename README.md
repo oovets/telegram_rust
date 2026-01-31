@@ -109,6 +109,8 @@ cargo run --release
 - **Ctrl+G**: Toggle line numbers
 - **Ctrl+T**: Toggle timestamps
 - **Ctrl+S**: Toggle chat list (sidebar)
+- **Ctrl+Y**: Toggle borders
+
 
 ### Commands
 Type in the input field:
