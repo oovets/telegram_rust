@@ -133,7 +133,7 @@ pub fn wrap_text(text: &str, indent: usize, width: usize) -> String {
                     current_line.clear();
                 }
                 // Split word by character boundaries
-                let mut char_indices: Vec<(usize, char)> = word.char_indices().collect();
+                let char_indices: Vec<(usize, char)> = word.char_indices().collect();
                 let mut char_pos = 0;
                 while char_pos < char_indices.len() {
                     let chunk_end = (char_pos + content_width).min(char_indices.len());
@@ -376,14 +376,15 @@ pub fn format_messages_for_display(
             parts.push("^".to_string());
         }
 
-        // Add marker for outgoing messages so we can style them differently
-        let sender_prefix = if data.is_outgoing {
-            format!("[OUT]{}:", sender_name)
+        // Add sender name and message
+        // We use internal markers that will be parsed in app.rs for coloring
+        // Format: [OUT|IN]:sender_id:sender_name:message
+        let formatted_msg = if data.is_outgoing {
+            format!("[OUT]:{}:{}:{}", data.sender_id, sender_name, text)
         } else {
-            format!("[IN]{}:", sender_name)
+            format!("[IN]:{}:{}:{}", data.sender_id, sender_name, text)
         };
-        parts.push(sender_prefix);
-        parts.push(text);
+        parts.push(formatted_msg);
 
         let mut msg_line = parts.join(" ");
         msg_line.push_str(&reactions_suffix);

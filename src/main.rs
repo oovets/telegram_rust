@@ -32,7 +32,7 @@ async fn main() -> Result<()> {
     let mut terminal = Terminal::new(backend)?;
 
     // Run app
-    let res = run_app(&mut terminal, &mut app).await;
+    let _res = run_app(&mut terminal, &mut app).await;
     
     // Save state before exiting (even if there was an error)
     let _ = app.save_state();

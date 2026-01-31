@@ -1,7 +1,6 @@
 use anyhow::Result;
 use grammers_client::{Client, Config as ClientConfig, InitParams, SignInError, Update};
 use grammers_session::Session;
-use grammers_tl_types as tl;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -225,22 +224,20 @@ impl TelegramClient {
             let mut reactions = std::collections::HashMap::new();
             if let Some(raw_reactions) = &message.raw.reactions {
                 use grammers_tl_types::enums::MessageReactions;
-                if let MessageReactions::Reactions(reactions_data) = raw_reactions {
-                    for reaction_count in &reactions_data.results {
-                        use grammers_tl_types::enums::ReactionCount;
-                        if let ReactionCount::Count(count_data) = reaction_count {
-                            let emoji = match &count_data.reaction {
-                                grammers_tl_types::enums::Reaction::Emoji(emoji_data) => {
-                                    emoji_data.emoticon.clone()
-                                }
-                                grammers_tl_types::enums::Reaction::CustomEmoji(custom_emoji) => {
-                                    format!("[emoji:{:?}]", custom_emoji)
-                                }
-                                _ => continue,
-                            };
-                            *reactions.entry(emoji).or_insert(0) += count_data.count as u32;
+                let MessageReactions::Reactions(reactions_data) = raw_reactions;
+                for reaction_count in &reactions_data.results {
+                    use grammers_tl_types::enums::ReactionCount;
+                    let ReactionCount::Count(count_data) = reaction_count;
+                    let emoji = match &count_data.reaction {
+                        grammers_tl_types::enums::Reaction::Emoji(emoji_data) => {
+                            emoji_data.emoticon.clone()
                         }
-                    }
+                        grammers_tl_types::enums::Reaction::CustomEmoji(custom_emoji) => {
+                            format!("[emoji:{:?}]", custom_emoji)
+                        }
+                        _ => continue,
+                    };
+                    *reactions.entry(emoji).or_insert(0) += count_data.count as u32;
                 }
             }
 
@@ -446,22 +443,20 @@ impl TelegramClient {
                 let mut reactions = std::collections::HashMap::new();
                 if let Some(raw_reactions) = &message.raw.reactions {
                     use grammers_tl_types::enums::MessageReactions;
-                    if let MessageReactions::Reactions(reactions_data) = raw_reactions {
-                        for reaction_count in &reactions_data.results {
-                            use grammers_tl_types::enums::ReactionCount;
-                            if let ReactionCount::Count(count_data) = reaction_count {
-                                let emoji = match &count_data.reaction {
-                                    grammers_tl_types::enums::Reaction::Emoji(emoji_data) => {
-                                        emoji_data.emoticon.clone()
-                                    }
-                                    grammers_tl_types::enums::Reaction::CustomEmoji(custom_emoji) => {
-                                        format!("[emoji:{:?}]", custom_emoji)
-                                    }
-                                    _ => continue,
-                                };
-                                *reactions.entry(emoji).or_insert(0) += count_data.count as u32;
+                    let MessageReactions::Reactions(reactions_data) = raw_reactions;
+                    for reaction_count in &reactions_data.results {
+                        use grammers_tl_types::enums::ReactionCount;
+                        let ReactionCount::Count(count_data) = reaction_count;
+                        let emoji = match &count_data.reaction {
+                            grammers_tl_types::enums::Reaction::Emoji(emoji_data) => {
+                                emoji_data.emoticon.clone()
                             }
-                        }
+                            grammers_tl_types::enums::Reaction::CustomEmoji(custom_emoji) => {
+                                format!("[emoji:{:?}]", custom_emoji)
+                            }
+                            _ => continue,
+                        };
+                        *reactions.entry(emoji).or_insert(0) += count_data.count as u32;
                     }
                 }
 
@@ -539,6 +534,9 @@ impl TelegramClient {
                 loop {
                     let client_lock = client.lock().await;
 
+                    // Get updates - grammers-client 0.7 only exposes NewMessage via next_update()
+                    // In Python (telethon/pyrogram), typing updates come through iter_updates()
+                    // but grammers-client doesn't have that method
                     match tokio::time::timeout(
                         std::time::Duration::from_millis(100),
                         client_lock.next_update(),
@@ -546,8 +544,6 @@ impl TelegramClient {
                     .await
                     {
                         Ok(Ok(update)) => {
-                            drop(client_lock);
-
                             match update {
                                 Update::NewMessage(msg) if !msg.outgoing() => {
                                     let chat_id = msg.chat().id();
@@ -557,6 +553,7 @@ impl TelegramClient {
                                         .unwrap_or_else(|| "Unknown".to_string());
                                     let text = msg.text().to_string();
 
+                                    drop(client_lock);
                                     let mut pending = updates.lock().await;
                                     pending.push(TelegramUpdate::NewMessage {
                                         chat_id,
@@ -569,6 +566,7 @@ impl TelegramClient {
                                     let chat_id = msg.chat().id();
                                     let text = msg.text().to_string();
 
+                                    drop(client_lock);
                                     let mut pending = updates.lock().await;
                                     pending.push(TelegramUpdate::NewMessage {
                                         chat_id,
@@ -577,7 +575,9 @@ impl TelegramClient {
                                         is_outgoing: true,
                                     });
                                 }
-                                _ => {}
+                                _ => {
+                                    drop(client_lock);
+                                }
                             }
                         }
                         Ok(Err(_e)) => {
@@ -590,6 +590,17 @@ impl TelegramClient {
                         }
                     }
 
+                    // Note: grammers-client 0.7 doesn't expose UserTyping updates
+                    // In Python (telethon/pyrogram), typing updates come through iter_updates()
+                    // but grammers-client doesn't have that method - only next_update()
+                    // The Update enum only has NewMessage variant
+                    // Typing indicators UI is ready (widgets.rs, app.rs) but can't receive updates yet
+                    // 
+                    // To fix this, we would need to:
+                    // 1. Check if there's a newer version of grammers-client that supports typing
+                    // 2. Use raw TL types directly (if Client exposes them somehow)
+                    // 3. Wait for library support
+                    
                     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
                 }
             });

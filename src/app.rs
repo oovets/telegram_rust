@@ -44,6 +44,7 @@ pub struct App {
     pub show_line_numbers: bool,
     pub show_timestamps: bool,
     pub show_chat_list: bool,
+    pub user_colors: std::collections::HashMap<i64, Color>, // Map sender_id to color for group chats
 }
 
 #[derive(Clone)]
@@ -154,6 +155,7 @@ impl App {
             show_line_numbers: app_state.settings.show_line_numbers,
             show_timestamps: app_state.settings.show_timestamps,
             show_chat_list: true,
+            user_colors: std::collections::HashMap::new(),
         };
 
         // Load messages for all panes that have a saved chat_id
@@ -301,6 +303,45 @@ impl App {
             self.chat_list_area = None;
         }
 
+        // Update user colors for group chats before rendering
+        // First, collect all sender IDs that need colors (to avoid borrow checker issues)
+        let colors = [
+            Color::Cyan, Color::Yellow, Color::Magenta, Color::Blue,
+            Color::Red, Color::Green, Color::White, Color::LightCyan,
+            Color::LightYellow, Color::LightMagenta, Color::LightBlue,
+            Color::LightRed, Color::LightGreen, Color::DarkGray,
+            Color::Rgb(192, 192, 192), // Silver/Light gray
+            Color::Rgb(255, 165, 0), // Orange
+            Color::Rgb(255, 192, 203), // Pink
+            Color::Rgb(128, 0, 128), // Purple
+            Color::Rgb(0, 255, 255), // Aqua
+            Color::Rgb(255, 20, 147), // Deep pink
+        ];
+        
+        let mut senders_to_color: Vec<i64> = Vec::new();
+        for pane in &self.panes {
+            if let Some(chat_id) = pane.chat_id {
+                let is_group_chat = self.chats.iter().any(|c| c.id == chat_id && c.is_group);
+                if is_group_chat && !pane.msg_data.is_empty() {
+                    // Get ALL unique sender IDs from all messages
+                    for msg in &pane.msg_data {
+                        if !self.user_colors.contains_key(&msg.sender_id) && !senders_to_color.contains(&msg.sender_id) {
+                            senders_to_color.push(msg.sender_id);
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Now assign colors to all collected senders
+        // Use sender_id as hash to get consistent colors per user
+        for &sender_id in &senders_to_color {
+            // Use absolute value of sender_id modulo colors.len() for consistent color assignment
+            let color_idx = (sender_id.abs() as usize) % colors.len();
+            let color = colors[color_idx];
+            self.user_colors.insert(sender_id, color);
+        }
+
         let render_fn = |f: &mut Frame, area: Rect, pane: &ChatPane, is_focused: bool| {
             self.draw_chat_pane_impl(f, area, pane, is_focused);
         };
@@ -330,7 +371,7 @@ impl App {
             .chats
             .iter()
             .enumerate()
-            .map(|(idx, chat)| {
+            .map(|(_idx, chat)| {
                 // Highlight if this chat is open in the focused pane
                 let mut style = if Some(chat.id) == active_chat_id {
                     Style::default()
@@ -450,6 +491,14 @@ impl App {
 
         // Messages - use rich formatted data if available, otherwise plain messages
         let message_width = chunks[1].width.saturating_sub(4) as usize;
+        
+        // Check if this is a group chat
+        let is_group_chat = if let Some(chat_id) = pane.chat_id {
+            self.chats.iter().any(|c| c.id == chat_id && c.is_group)
+        } else {
+            false
+        };
+        
         let display_lines = if !pane.msg_data.is_empty() {
             // Use msg_data for rich formatting
             let filter_type = pane
@@ -502,14 +551,114 @@ impl App {
                 } else if msg.starts_with("  ↳ Reply to") {
                     // Other reply lines: gray and italic
                     (msg.to_string(), Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC))
-                } else if msg.contains("[OUT]") {
-                    // Outgoing message: remove marker and style name in green
-                    let clean_msg = msg.replace("[OUT]", "");
-                    (clean_msg, Style::default().fg(Color::Green))
-                } else if msg.contains("[IN]") {
-                    // Incoming message: remove marker and style name in cyan
-                    let clean_msg = msg.replace("[IN]", "");
-                    (clean_msg, Style::default().fg(Color::Cyan))
+                } else if msg.contains("[OUT]:") {
+                    // Outgoing message: extract sender_id and apply color
+                    // Format: prefix [OUT]:sender_id:sender_name:message
+                    // Find where [OUT]: starts
+                    if let Some(marker_pos) = msg.find("[OUT]:") {
+                        let prefix = &msg[..marker_pos]; // Everything before [OUT]:
+                        let after_marker = &msg[marker_pos + 6..]; // Skip "[OUT]:"
+                        
+                        if let Some(first_colon) = after_marker.find(':') {
+                            let sender_id_str = &after_marker[..first_colon];
+                            let after_id = &after_marker[first_colon + 1..];
+                            if let Some(second_colon) = after_id.find(':') {
+                                let sender_name = &after_id[..second_colon];
+                                let message_text = &after_id[second_colon + 1..];
+                                
+                                if let Ok(sender_id) = sender_id_str.parse::<i64>() {
+                                    // Use green for own messages, or color from map for group chats
+                                    let color = if is_group_chat {
+                                        self.user_colors.get(&sender_id).copied().unwrap_or(Color::Green)
+                                    } else {
+                                        Color::Green
+                                    };
+                                    let clean_msg = format!("{}{}:{}", prefix, sender_name, message_text);
+                                    (clean_msg, Style::default().fg(color))
+                                } else {
+                                    // Fallback if parsing fails
+                                    let parts: Vec<&str> = after_marker.splitn(3, ':').collect();
+                                    let clean_msg = if parts.len() >= 3 {
+                                        format!("{}{}:{}", prefix, parts[1], parts[2])
+                                    } else {
+                                        format!("{}{}", prefix, after_marker)
+                                    };
+                                    (clean_msg, Style::default().fg(Color::Green))
+                                }
+                            } else {
+                                // Fallback if format is wrong
+                                let parts: Vec<&str> = after_marker.splitn(3, ':').collect();
+                                let clean_msg = if parts.len() >= 3 {
+                                    format!("{}{}:{}", prefix, parts[1], parts[2])
+                                } else if parts.len() == 2 {
+                                    format!("{}{}:{}", prefix, parts[0], parts[1])
+                                } else {
+                                    format!("{}{}", prefix, after_marker)
+                                };
+                                (clean_msg, Style::default().fg(Color::Green))
+                            }
+                        } else {
+                            // Fallback if format is wrong
+                            (format!("{}{}", prefix, after_marker), Style::default().fg(Color::Green))
+                        }
+                    } else {
+                        // Shouldn't happen since we checked contains
+                        (msg.to_string(), Style::default().fg(Color::Green))
+                    }
+                } else if msg.contains("[IN]:") {
+                    // Incoming message: extract sender_id and apply color
+                    // Format: prefix [IN]:sender_id:sender_name:message
+                    // Find where [IN]: starts
+                    if let Some(marker_pos) = msg.find("[IN]:") {
+                        let prefix = &msg[..marker_pos]; // Everything before [IN]:
+                        let after_marker = &msg[marker_pos + 5..]; // Skip "[IN]:"
+                        
+                        if let Some(first_colon) = after_marker.find(':') {
+                            let sender_id_str = &after_marker[..first_colon];
+                            let after_id = &after_marker[first_colon + 1..];
+                            if let Some(second_colon) = after_id.find(':') {
+                                let sender_name = &after_id[..second_colon];
+                                let message_text = &after_id[second_colon + 1..];
+                                
+                                if let Ok(sender_id) = sender_id_str.parse::<i64>() {
+                                    // Use color from map for group chats, cyan for 1-on-1 chats
+                                    let color = if is_group_chat {
+                                        self.user_colors.get(&sender_id).copied().unwrap_or(Color::Cyan)
+                                    } else {
+                                        Color::Cyan
+                                    };
+                                    let clean_msg = format!("{}{}:{}", prefix, sender_name, message_text);
+                                    (clean_msg, Style::default().fg(color))
+                                } else {
+                                    // Fallback if parsing fails
+                                    let parts: Vec<&str> = after_marker.splitn(3, ':').collect();
+                                    let clean_msg = if parts.len() >= 3 {
+                                        format!("{}{}:{}", prefix, parts[1], parts[2])
+                                    } else {
+                                        format!("{}{}", prefix, after_marker)
+                                    };
+                                    (clean_msg, Style::default().fg(Color::Cyan))
+                                }
+                            } else {
+                                // Fallback if format is wrong
+                                let parts: Vec<&str> = after_marker.splitn(3, ':').collect();
+                                let clean_msg = if parts.len() >= 3 {
+                                    format!("{}{}:{}", prefix, parts[1], parts[2])
+                                } else if parts.len() == 2 {
+                                    format!("{}{}:{}", prefix, parts[0], parts[1])
+                                } else {
+                                    format!("{}{}", prefix, after_marker)
+                                };
+                                (clean_msg, Style::default().fg(Color::Cyan))
+                            }
+                        } else {
+                            // Fallback if format is wrong
+                            (format!("{}{}", prefix, after_marker), Style::default().fg(Color::Cyan))
+                        }
+                    } else {
+                        // Shouldn't happen since we checked contains
+                        (msg.to_string(), Style::default().fg(Color::Cyan))
+                    }
                 } else {
                     // Default style
                     (msg.to_string(), Style::default())
@@ -626,7 +775,7 @@ impl App {
 
     pub async fn load_pane_messages_if_needed(&mut self, pane_idx: usize) {
         if let Some(pane) = self.panes.get(pane_idx) {
-            if let Some(chat_id) = pane.chat_id {
+            if let Some(_chat_id) = pane.chat_id {
                 if pane.msg_data.is_empty() {
                     let _ = self.refresh_pane_messages(pane_idx).await;
                 }
@@ -1075,7 +1224,7 @@ impl App {
             }
         } else if !self.focus_on_chat_list {
             // Get input from active pane
-            let (input_text, chat_id, reply_to_id) = if let Some(pane) = self.panes.get(self.focused_pane_idx) {
+            let (input_text, _chat_id, _reply_to_id) = if let Some(pane) = self.panes.get(self.focused_pane_idx) {
                 (pane.input_buffer.clone(), pane.chat_id, pane.reply_to_message)
             } else {
                 return Ok(());
