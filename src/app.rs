@@ -248,9 +248,8 @@ impl App {
                             }
                         }
                     }
-                    Err(e) => {
-                        // Log error but continue loading other panes
-                        eprintln!("Failed to load messages for chat {} in pane {}: {}", chat_id, idx, e);
+                    Err(_) => {
+                        // Silently continue loading other panes
                     }
                 }
             }
@@ -303,19 +302,17 @@ impl App {
             self.chat_list_area = None;
         }
 
-        // Update user colors for group chats before rendering
-        // First, collect all sender IDs that need colors (to avoid borrow checker issues)
         let colors = [
             Color::Cyan, Color::Yellow, Color::Magenta, Color::Blue,
             Color::Red, Color::Green, Color::White, Color::LightCyan,
             Color::LightYellow, Color::LightMagenta, Color::LightBlue,
             Color::LightRed, Color::LightGreen, Color::DarkGray,
-            Color::Rgb(192, 192, 192), // Silver/Light gray
-            Color::Rgb(255, 165, 0), // Orange
-            Color::Rgb(255, 192, 203), // Pink
-            Color::Rgb(128, 0, 128), // Purple
-            Color::Rgb(0, 255, 255), // Aqua
-            Color::Rgb(255, 20, 147), // Deep pink
+            Color::Rgb(192, 192, 192),
+            Color::Rgb(255, 165, 0),
+            Color::Rgb(255, 192, 203),
+            Color::Rgb(128, 0, 128),
+            Color::Rgb(0, 255, 255),
+            Color::Rgb(255, 20, 147)
         ];
         
         let mut senders_to_color: Vec<i64> = Vec::new();
@@ -323,7 +320,6 @@ impl App {
             if let Some(chat_id) = pane.chat_id {
                 let is_group_chat = self.chats.iter().any(|c| c.id == chat_id && c.is_group);
                 if is_group_chat && !pane.msg_data.is_empty() {
-                    // Get ALL unique sender IDs from all messages
                     for msg in &pane.msg_data {
                         if !self.user_colors.contains_key(&msg.sender_id) && !senders_to_color.contains(&msg.sender_id) {
                             senders_to_color.push(msg.sender_id);
@@ -333,13 +329,9 @@ impl App {
             }
         }
         
-        // Now assign colors to all collected senders
-        // Use a better hash function to spread colors more evenly
         for &sender_id in &senders_to_color {
-            // Use a simple hash function that mixes the bits better
-            // This helps avoid collisions where different IDs get the same color
             let mut hash = sender_id.abs() as u64;
-            hash = hash.wrapping_mul(2654435761); // Knuth's multiplicative hash
+            hash = hash.wrapping_mul(2654435761);
             hash = hash ^ (hash >> 16);
             hash = hash.wrapping_mul(0x85ebca6b);
             hash = hash ^ (hash >> 13);
@@ -552,21 +544,15 @@ impl App {
                     return vec![Line::from("")];
                 }
                 
-                // Determine styling based on message content
                 let (display_msg, style) = if msg.starts_with("[REPLY_TO_ME]") {
-                    // Reply to my own message: remove marker and style in red
                     let clean_msg = msg.replace("[REPLY_TO_ME]", "").trim_start().to_string();
                     (clean_msg, Style::default().fg(Color::Red).add_modifier(Modifier::ITALIC))
                 } else if msg.starts_with("  ↳ Reply to") {
-                    // Other reply lines: gray and italic
                     (msg.to_string(), Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC))
                 } else if msg.contains("[OUT]:") {
-                    // Outgoing message: extract sender_id and apply color
-                    // Format: prefix [OUT]:sender_id:sender_name:message
-                    // Find where [OUT]: starts
                     if let Some(marker_pos) = msg.find("[OUT]:") {
-                        let prefix = &msg[..marker_pos]; // Everything before [OUT]:
-                        let after_marker = &msg[marker_pos + 6..]; // Skip "[OUT]:"
+                        let prefix = &msg[..marker_pos];
+                        let after_marker = &msg[marker_pos + 6..];
                         
                         if let Some(first_colon) = after_marker.find(':') {
                             let sender_id_str = &after_marker[..first_colon];
@@ -576,7 +562,6 @@ impl App {
                                 let message_text = &after_id[second_colon + 1..];
                                 
                                 if let Ok(sender_id) = sender_id_str.parse::<i64>() {
-                                    // Use green for own messages, or color from map for group chats
                                     let color = if is_group_chat {
                                         self.user_colors.get(&sender_id).copied().unwrap_or(Color::Green)
                                     } else {
@@ -595,7 +580,6 @@ impl App {
                                     (clean_msg, Style::default().fg(Color::Green))
                                 }
                             } else {
-                                // Fallback if format is wrong
                                 let parts: Vec<&str> = after_marker.splitn(3, ':').collect();
                                 let clean_msg = if parts.len() >= 3 {
                                     format!("{}{}:{}", prefix, parts[1], parts[2])
@@ -607,20 +591,15 @@ impl App {
                                 (clean_msg, Style::default().fg(Color::Green))
                             }
                         } else {
-                            // Fallback if format is wrong
                             (format!("{}{}", prefix, after_marker), Style::default().fg(Color::Green))
                         }
                     } else {
-                        // Shouldn't happen since we checked contains
                         (msg.to_string(), Style::default().fg(Color::Green))
                     }
                 } else if msg.contains("[IN]:") {
-                    // Incoming message: extract sender_id and apply color
-                    // Format: prefix [IN]:sender_id:sender_name:message
-                    // Find where [IN]: starts
                     if let Some(marker_pos) = msg.find("[IN]:") {
-                        let prefix = &msg[..marker_pos]; // Everything before [IN]:
-                        let after_marker = &msg[marker_pos + 5..]; // Skip "[IN]:"
+                        let prefix = &msg[..marker_pos];
+                        let after_marker = &msg[marker_pos + 5..];
                         
                         if let Some(first_colon) = after_marker.find(':') {
                             let sender_id_str = &after_marker[..first_colon];
@@ -630,7 +609,6 @@ impl App {
                                 let message_text = &after_id[second_colon + 1..];
                                 
                                 if let Ok(sender_id) = sender_id_str.parse::<i64>() {
-                                    // Use color from map for group chats, cyan for 1-on-1 chats
                                     let color = if is_group_chat {
                                         self.user_colors.get(&sender_id).copied().unwrap_or(Color::Cyan)
                                     } else {
@@ -665,11 +643,9 @@ impl App {
                             (format!("{}{}", prefix, after_marker), Style::default().fg(Color::Cyan))
                         }
                     } else {
-                        // Shouldn't happen since we checked contains
                         (msg.to_string(), Style::default().fg(Color::Cyan))
                     }
                 } else {
-                    // Default style
                     (msg.to_string(), Style::default())
                 };
                 
@@ -712,11 +688,9 @@ impl App {
             })
             .collect();
 
-        // Calculate scroll position - we want to show the latest messages (at the bottom)
-        let available_height = chunks[1].height.saturating_sub(2) as usize; // -2 for borders
+        let available_height = chunks[1].height.saturating_sub(2) as usize;
         let total_lines = message_lines.len();
         
-        // Auto-scroll to bottom if scroll_offset is 0 (default/new chat)
         let actual_scroll = if pane.scroll_offset == 0 && total_lines > available_height {
             total_lines.saturating_sub(available_height)
         } else {
@@ -728,7 +702,6 @@ impl App {
             .scroll((actual_scroll as u16, 0));
         f.render_widget(messages, chunks[1]);
 
-        // Reply preview bar (if active)
         if has_reply_preview {
             if let Some(ref preview) = pane.reply_preview {
                 let reply_bar = Paragraph::new(preview.as_str())
@@ -737,7 +710,6 @@ impl App {
             }
         }
 
-        // Input
         let input_chunk = if has_reply_preview { chunks[3] } else { chunks[2] };
         let input_title = if is_focused && !self.focus_on_chat_list {
             "Input (type message, /command, or Tab to cycle)"

@@ -590,17 +590,6 @@ impl TelegramClient {
                         }
                     }
 
-                    // Note: grammers-client 0.7 doesn't expose UserTyping updates
-                    // In Python (telethon/pyrogram), typing updates come through iter_updates()
-                    // but grammers-client doesn't have that method - only next_update()
-                    // The Update enum only has NewMessage variant
-                    // Typing indicators UI is ready (widgets.rs, app.rs) but can't receive updates yet
-                    // 
-                    // To fix this, we would need to:
-                    // 1. Check if there's a newer version of grammers-client that supports typing
-                    // 2. Use raw TL types directly (if Client exposes them somehow)
-                    // 3. Wait for library support
-                    
                     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
                 }
             });
