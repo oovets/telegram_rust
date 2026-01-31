@@ -145,15 +145,29 @@ async fn run_app<B: ratatui::backend::Backend>(
                     KeyCode::Char('y') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                         app.toggle_borders();
                     }
-                    // Esc: Cancel reply mode
+                    // Esc: Cancel reply, or focus chat list
                     KeyCode::Esc => {
                         if let Some(pane) = app.panes.get_mut(app.focused_pane_idx) {
                             if pane.reply_to_message.is_some() {
                                 pane.reply_to_message = None;
                                 pane.hide_reply_preview();
+                            } else {
+                                app.focus_on_chat_list = true;
                             }
                         }
-                    }                    // Tab: Autocomplete or cycle focus
+                    }
+                    // Ctrl+Left/Right: Switch between panes
+                    KeyCode::Left if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        app.focus_prev_pane();
+                    }
+                    KeyCode::Right if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        app.focus_next_pane();
+                    }
+                    // Shift+Tab: Cycle focus backwards
+                    KeyCode::BackTab => {
+                        app.cycle_focus_reverse();
+                    }
+                    // Tab: Autocomplete or cycle focus
                     KeyCode::Tab => {
                         app.handle_tab();
                     }
@@ -170,6 +184,12 @@ async fn run_app<B: ratatui::backend::Backend>(
                     }
                     KeyCode::PageDown => {
                         app.handle_page_down();
+                    }
+                    // Alt+Enter: Insert newline
+                    KeyCode::Enter if key.modifiers.contains(KeyModifiers::ALT) => {
+                        if !app.focus_on_chat_list {
+                            app.handle_char('\n');
+                        }
                     }
                     // Enter: Submit
                     KeyCode::Enter => {

@@ -28,7 +28,9 @@ A fully functional Telegram client in the terminal, written in Rust for maximum 
   - Ctrl+K: Toggle split direction (vertical ↔ horizontal)
   - Ctrl+W: Close pane
   - Ctrl+L: Clear pane
-  - Tab: Cycle focus between panes and chat list
+  - Tab/Shift+Tab: Cycle focus between panes and chat list
+  - Ctrl+Left/Right: Switch directly between panes
+  - Alt+Enter: Multi-line input
 - **Commands**: /reply, /search, /media, /edit, /delete, /alias, /filter, etc.
 - **Persistence**: Saves layout, settings and aliases between sessions
 - **Mouse Support**: Click to select panes and open chats
@@ -85,8 +87,11 @@ cargo run --release
 ### Navigation
 - **Up/Down**: Navigate in chat list or input history
 - **Tab**: Cycle between chat list -> Pane 1 -> Pane 2 -> ... -> back to chat list
+- **Shift+Tab**: Cycle focus backwards
+- **Ctrl+Left/Right**: Switch directly between panes
 - **Enter**: Open selected chat (in active pane) or send message
-- **ESC**: Cancel reply mode
+- **Alt+Enter**: Insert newline in input box
+- **ESC**: Cancel reply mode, or return to chat list
 
 ### Mouse
 - **Click on pane**: Activate that pane (green border) and focus input box

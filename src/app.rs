@@ -454,8 +454,26 @@ impl App {
         let border_overhead = if self.show_borders { 2 } else { 0 };
         let header_height = if self.show_borders { 3 } else { 1 };
         let inner_width = area.width.saturating_sub(if self.show_borders { 2 } else { 0 }).max(1) as usize;
-        let input_text_len = if is_focused { pane.input_buffer.len() + 1 } else { 0 }; // +1 for cursor
-        let text_lines = if inner_width > 0 { ((input_text_len as f64) / (inner_width as f64)).ceil().max(1.0) as u16 } else { 1 };
+        let text_lines = if is_focused && inner_width > 0 {
+            let buf = &pane.input_buffer;
+            let mut lines: u16 = 0;
+            for line in buf.split('\n') {
+                // Each logical line wraps based on its length (+ cursor on last segment)
+                let len = line.len();
+                lines += ((len as f64) / (inner_width as f64)).ceil().max(1.0) as u16;
+            }
+            // Account for cursor on the last line
+            let last_line_len = buf.rsplit('\n').next().map_or(buf.len(), |l| l.len()) + 1;
+            if last_line_len > inner_width {
+                let without_cursor = buf.rsplit('\n').next().map_or(buf.len(), |l| l.len());
+                let lines_without = ((without_cursor as f64) / (inner_width as f64)).ceil().max(1.0) as u16;
+                let lines_with = ((last_line_len as f64) / (inner_width as f64)).ceil().max(1.0) as u16;
+                lines += lines_with - lines_without;
+            }
+            lines.max(1)
+        } else {
+            1
+        };
         let input_height = text_lines + border_overhead + 1; // +1 for spacing below
 
         let constraints = if has_reply_preview {
@@ -739,7 +757,7 @@ impl App {
 
         let input_chunk = if has_reply_preview { chunks[3] } else { chunks[2] };
         let input_title = if is_focused && !self.focus_on_chat_list {
-            "Input (type message, /command, or Tab to cycle)"
+            "Input (Alt+Enter for newline, Tab to cycle)"
         } else {
             "Input"
         };
@@ -943,6 +961,56 @@ impl App {
                 self.focused_pane_idx = all_panes[0];
                 self.notify(&format!("Focus: Pane #{}", self.focused_pane_idx + 1));
             }
+        }
+    }
+
+    pub fn cycle_focus_reverse(&mut self) {
+        let all_panes = self.pane_tree.get_pane_indices();
+        if all_panes.is_empty() {
+            return;
+        }
+
+        if self.focus_on_chat_list {
+            // Go to last pane
+            self.focus_on_chat_list = false;
+            self.focused_pane_idx = *all_panes.last().unwrap();
+            self.notify(&format!("Focus: Pane #{}", self.focused_pane_idx + 1));
+        } else {
+            if let Some(current_pos) = all_panes.iter().position(|&idx| idx == self.focused_pane_idx) {
+                if current_pos > 0 {
+                    self.focused_pane_idx = all_panes[current_pos - 1];
+                    self.notify(&format!("Focus: Pane #{}", self.focused_pane_idx + 1));
+                } else {
+                    self.focus_on_chat_list = true;
+                    self.notify("Focus: Chat List");
+                }
+            }
+        }
+    }
+
+    pub fn focus_next_pane(&mut self) {
+        let all_panes = self.pane_tree.get_pane_indices();
+        if all_panes.len() < 2 {
+            return;
+        }
+        if let Some(current_pos) = all_panes.iter().position(|&idx| idx == self.focused_pane_idx) {
+            let next = (current_pos + 1) % all_panes.len();
+            self.focused_pane_idx = all_panes[next];
+            self.focus_on_chat_list = false;
+            self.notify(&format!("Focus: Pane #{}", self.focused_pane_idx + 1));
+        }
+    }
+
+    pub fn focus_prev_pane(&mut self) {
+        let all_panes = self.pane_tree.get_pane_indices();
+        if all_panes.len() < 2 {
+            return;
+        }
+        if let Some(current_pos) = all_panes.iter().position(|&idx| idx == self.focused_pane_idx) {
+            let prev = if current_pos > 0 { current_pos - 1 } else { all_panes.len() - 1 };
+            self.focused_pane_idx = all_panes[prev];
+            self.focus_on_chat_list = false;
+            self.notify(&format!("Focus: Pane #{}", self.focused_pane_idx + 1));
         }
     }
 
