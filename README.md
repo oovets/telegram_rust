@@ -1,121 +1,176 @@
-# Telegram Terminal Client
+# Telegram Client - Rust TUI
 
-A terminal/TUI client for Telegram built with Python, Textual and Telethon.
+A fully functional Telegram client in the terminal, written in Rust for maximum performance and responsiveness.
 
 ## Features
 
-- Full terminal/TUI client (no GUI, works over SSH)
-- Split panes - view multiple conversations simultaneously
-- Media download and viewing (photos, videos, documents, etc.)
-- Two-factor authentication support
-- Layout persistence (remembers your splits and open chats)
-- Settings persistence (remembers your toggle preferences)
-- URL shortening for long links
-- Message reactions display
-- YouTube and Spotify link detection with title preview
-- User aliases (shorten long names)
-- Message filtering (by sender, media type, links)
-- Search in message history
-- Desktop notifications (macOS/Linux)
-- DISABLE EMOJIS IN CHATS!
+### Complete Implementation
+- **Split View System**: Split screen vertically/horizontally into multiple panes
+- **Multi-Chat Support**: Open multiple chats simultaneously in different panes
+- **Click-to-Focus**: Click on panes to activate them, click on chats to open
+- **Reply System**: Reply to messages with full context and quoted text
+- **Message Formatting**: 
+  - Color-coded messages (green for outgoing, cyan for incoming)
+  - Red highlighting for replies to your own messages
+  - Emoji support and URL shortening
+  - Reaction display
+- **Display Toggles**:
+  - Ctrl+E: Reactions
+  - Ctrl+O: Emojis
+  - Ctrl+T: Timestamps
+  - Ctrl+G: Line numbers
+  - Ctrl+D: Compact mode
+  - Ctrl+S: Chat list (show/hide sidebar)
+- **Pane Management**:
+  - Ctrl+V: Split vertically
+  - Ctrl+B: Split horizontally
+  - Ctrl+W: Close pane
+  - Ctrl+L: Clear pane
+  - Tab: Cycle focus between panes and chat list
+- **Commands**: /reply, /search, /media, /edit, /delete, /alias, /filter, etc.
+- **Persistence**: Saves layout, settings and aliases between sessions
+- **Real-time Updates**: Automatic updating of new messages
+- **Mouse Support**: Click to select panes and open chats
 
-..and many others!
+## Project Structure
 
-## Installation
-
-1. Install dependencies:
-```bash
-pip install -r requirements.txt
+```
+telegram_client_rs/
+├── Cargo.toml           # Dependencies and project configuration
+├── src/
+│   ├── main.rs         # Entry point, event loop and mouse handling
+│   ├── app.rs          # Main application, UI logic and pane management
+│   ├── config.rs       # Configuration management
+│   ├── telegram.rs     # Telegram API integration (grammers-client)
+│   ├── widgets.rs      # ChatPane, MessageData structures
+│   ├── split_view.rs   # Split view tree structure and rendering
+│   ├── commands.rs     # Command parser and handlers
+│   ├── formatting.rs   # Message formatting, wrapping and URL handling
+│   ├── persistence.rs  # Layout, settings and alias persistence
+│   └── utils.rs        # Utility functions and desktop notifications
 ```
 
-2. Get API credentials from Telegram:
-   - Go to https://my.telegram.org
-   - Log in with your phone number
-   - Create a new application
-   - Copy the API ID and API Hash
+## Dependencies
+
+- **ratatui** (0.29): Modern TUI framework
+- **crossterm**: Cross-platform terminal manipulation and mouse events
+- **tokio**: Async runtime
+- **grammers-client**: Telegram MTProto client
+- **grammers-session**: Session management
+- **serde + serde_json**: Serialization for config and persistence
+- **chrono**: Timestamp handling
+- **anyhow**: Ergonomic error handling
+
+## Installation & Running
+
+```bash
+# Clone repo
+cd telegram_client_rs
+
+# First time: requires Telegram API credentials
+# Add api_id and api_hash to telegram_config.json
+
+# Build
+cargo build --release
+
+# Run
+./target/release/telegram_client_rs
+# or
+cargo run --release
+```
 
 ## Usage
 
-1. Run the client:
-```bash
-python telegram_client.py
+### Navigation
+- **Up/Down**: Navigate in chat list or input history
+- **Tab**: Cycle between chat list -> Pane 1 -> Pane 2 -> ... -> back to chat list
+- **Enter**: Open selected chat (in active pane) or send message
+- **ESC**: Cancel reply mode
+
+### Mouse
+- **Click on pane**: Activate that pane (green border)
+- **Click on chat**: Open chat in active pane
+
+### Pane Management
+- **Ctrl+V**: Split active pane vertically
+- **Ctrl+B**: Split active pane horizontally
+- **Ctrl+W**: Close active pane
+- **Ctrl+L**: Clear active pane
+- **PageUp/PageDown**: Scroll messages
+
+### Display Settings
+- **Ctrl+E**: Toggle reactions
+- **Ctrl+N**: Toggle notifications
+- **Ctrl+D**: Toggle compact mode
+- **Ctrl+O**: Toggle emojis
+- **Ctrl+G**: Toggle line numbers
+- **Ctrl+T**: Toggle timestamps
+- **Ctrl+S**: Toggle chat list (sidebar)
+
+### Commands
+Type in the input field:
+- `/reply <number>`: Reply to message
+- `/search <query>`: Search in active chat
+- `/media`: List media in chat
+- `/edit <id> <text>`: Edit message
+- `/delete <id>`: Delete message
+- `/alias <user> <alias>`: Set alias for user
+- `/filter sender <name>`: Filter by sender
+- `/clear`: Clear filter
+
+### Shortcuts
+- **Ctrl+Q**: Quit
+- **Ctrl+R**: Refresh chat list
+- **Ctrl+I**: Input focus toggle (legacy)
+
+## File Formats
+
+### telegram_config.json
+```json
+{
+  "api_id": 123456,
+  "api_hash": "your_hash_here",
+  "session_file": "telegram_session.session"
+}
 ```
 
-2. On first run, enter your API ID and API Hash when prompted
+### telegram_aliases.json
+```json
+{
+  "123456789": "Alice",
+  "987654321": "Bob"
+}
+```
 
-3. Follow the instructions to log in:
-   - Enter your phone number
-   - Enter the verification code sent to Telegram
-   - If you have two-factor authentication, enter your password
+### telegram_layout.json
+Automatically saves split layout and pane configuration between sessions.
 
-4. Select a conversation from the sidebar to view messages
+### Planned
+- Media download and inline preview
+- Typing indicators
+- Online status
+- Advanced message filtering
+- Message search pagination
+- Channel management
 
-5. Type messages in the input field and press Enter to send
+## Development
 
-## Keybindings
+```bash
+# Debug build with logging
+cargo build
 
-| Key | Action |
-|-----|--------|
-| `Ctrl+V` | Split vertically (side by side) |
-| `Ctrl+B` | Split horizontally (stacked) |
-| `Ctrl+W` | Close current pane |
-| `Tab` | Cycle between panes / autocomplete commands |
-| `Up/Down` | Browse input history |
-| `Ctrl+R` | Refresh conversations |
-| `Ctrl+L` | Clear current pane |
-| `Ctrl+E` | Toggle reactions display |
-| `Ctrl+N` | Toggle desktop notifications |
-| `Ctrl+D` | Toggle compact mode (spacing between messages) |
-| `Ctrl+O` | Toggle emojis display |
-| `Ctrl+G` | Toggle message line numbers |
-| `Ctrl+Q` | Quit (saves layout and settings) |
+# Release build (optimized)
+cargo build --release
 
-## Commands
+# Run tests
+cargo test
 
-| Command | Description |
-|---------|-------------|
-| `/reply N [text]` | Reply to message #N (inline text optional) |
-| `/media N` or `/m N` | Download and open media from message #N |
-| `/edit N text` or `/e N text` | Edit your message #N with new text |
-| `/delete N` or `/del N` or `/d N` | Delete your message #N |
-| `/alias N name` | Set display alias for sender of message #N |
-| `/unalias N` | Remove alias for sender of message #N |
-| `/filter <type>` | Filter messages (photo/video/audio/doc/link/name) |
-| `/filter off` | Disable filter |
-| `/search <query>` or `/s <query>` | Search message history |
-| `/new @username` | Start new chat with user |
-| `/newgroup <name>` | Create a new group |
-| `/add @username` | Add member to current group |
-| `/kick @username` or `/remove @username` | Remove member from group |
-| `/members` | List members in current group |
-| `/forward N @target` or `/fwd N @target` | Forward message #N to @target |
+# Check code without building
+cargo check
 
-## Configuration Files
+# Format code
+cargo fmt
 
-| File | Description |
-|------|-------------|
-| `telegram_config.json` | API credentials and settings (saved automatically) |
-| `telegram_session.session` | Session data (no need to log in every time) |
-| `telegram_layout.json` | Window layout and open chats (saved on quit) |
-| `telegram_aliases.json` | User display name aliases |
-
-## Security
-
-- Session file contains sensitive data - do not share it
-- API credentials are stored locally in plain text - protect these files
-- Do not use this client on shared computers without removing the session file after use
-
-## Technical Information
-
-- **Telethon**: Telegram API library for Python
-- **Textual**: Modern TUI framework for Python
-- **Asyncio**: For asynchronous communication with Telegram servers
-
-## Default Settings
-
-- Shows up to 200 conversations and 100 messages per conversation (configurable in code)
-
-## Future Improvements
-
-- [ ] Voice message playback
-- [ ] Pin/unpin messages
+# Lint code
+cargo clippy
+```
