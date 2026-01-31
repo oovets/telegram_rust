@@ -3,7 +3,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::Line,
-    widgets::{Block, Borders, List, ListItem, Paragraph},
+    widgets::{Block, Borders, List, ListItem, Padding, Paragraph},
     Frame,
 };
 
@@ -44,6 +44,8 @@ pub struct App {
     pub show_line_numbers: bool,
     pub show_timestamps: bool,
     pub show_chat_list: bool,
+    pub show_user_colors: bool,
+    pub show_borders: bool,
     pub user_colors: std::collections::HashMap<i64, Color>, // Map sender_id to color for group chats
 }
 
@@ -155,6 +157,8 @@ impl App {
             show_line_numbers: app_state.settings.show_line_numbers,
             show_timestamps: app_state.settings.show_timestamps,
             show_chat_list: true,
+            show_user_colors: app_state.settings.show_user_colors,
+            show_borders: app_state.settings.show_borders,
             user_colors: std::collections::HashMap::new(),
         };
 
@@ -422,13 +426,16 @@ impl App {
             Style::default()
         };
 
+        let list_block = if self.show_borders {
+            Block::default()
+                .borders(Borders::ALL)
+                .title("Chats")
+                .border_style(border_style)
+        } else {
+            Block::default()
+        };
         let list = List::new(items)
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .title("Chats")
-                    .border_style(border_style),
-            )
+            .block(list_block)
             .highlight_style(Style::default().add_modifier(Modifier::REVERSED));
 
         f.render_widget(list, area);
@@ -485,8 +492,13 @@ impl App {
         }
         header_text.push_str(&pane.header_text());
         
+        let header_block = if self.show_borders {
+            Block::default().borders(Borders::ALL)
+        } else {
+            Block::default()
+        };
         let header = Paragraph::new(header_text)
-            .block(Block::default().borders(Borders::ALL))
+            .block(header_block)
             .style(header_style);
         f.render_widget(header, chunks[0]);
 
@@ -697,8 +709,13 @@ impl App {
             pane.scroll_offset
         };
 
+        let messages_block = if self.show_borders {
+            Block::default().borders(Borders::ALL).title("Messages")
+        } else {
+            Block::default().padding(Padding::left(2))
+        };
         let messages = Paragraph::new(message_lines)
-            .block(Block::default().borders(Borders::ALL).title("Messages"))
+            .block(messages_block)
             .scroll((actual_scroll as u16, 0));
         f.render_widget(messages, chunks[1]);
 
@@ -729,8 +746,13 @@ impl App {
             }
         }
         
+        let input_block = if self.show_borders {
+            Block::default().borders(Borders::ALL).title(input_title)
+        } else {
+            Block::default()
+        };
         let input = Paragraph::new(input_text)
-            .block(Block::default().borders(Borders::ALL).title(input_title));
+            .block(input_block);
         f.render_widget(input, input_chunk);
     }
 
@@ -973,6 +995,19 @@ impl App {
         self.notify(&format!("Chat list: {}", if self.show_chat_list { "ON" } else { "OFF" }));
     }
 
+    pub fn toggle_user_colors(&mut self) {
+        self.show_user_colors = !self.show_user_colors;
+        let status = if self.show_user_colors { "ON" } else { "OFF" };
+        self.notify(&format!("User colors: {}", status));
+        self.refresh_all_pane_displays();
+    }
+
+    pub fn toggle_borders(&mut self) {
+        self.show_borders = !self.show_borders;
+        self.notify(&format!("Borders: {}", if self.show_borders { "ON" } else { "OFF" }));
+    }
+
+
     /// Handle mouse click to select pane or open chat
     pub fn handle_mouse_click(&mut self, x: u16, y: u16) {
         // Check if clicking on a pane
@@ -990,12 +1025,13 @@ impl App {
     /// Handle mouse click on chat list
     pub async fn handle_chat_list_click(&mut self, y: u16, list_area: Rect) -> Result<()> {
         // Calculate which chat was clicked based on Y position
-        // Each chat item is 1 line, starting at list_area.y + 1 (after top border)
-        if y < list_area.y + 1 || y >= list_area.y + list_area.height - 1 {
-            return Ok(()); // Clicked on border
+        // Each chat item is 1 line, starting at list_area.y + border_offset (after top border if present)
+        let border_offset = if self.show_borders { 1 } else { 0 };
+        if y < list_area.y + border_offset || y >= list_area.y + list_area.height - border_offset {
+            return Ok(()); // Clicked on border or outside
         }
         
-        let relative_y = (y - list_area.y - 1) as usize;
+        let relative_y = (y - list_area.y - border_offset) as usize;
         if relative_y < self.chats.len() {
             // Open this chat in the focused pane
             if let Some(chat) = self.chats.get(relative_y) {
