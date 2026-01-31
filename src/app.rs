@@ -334,10 +334,19 @@ impl App {
         }
         
         // Now assign colors to all collected senders
-        // Use sender_id as hash to get consistent colors per user
+        // Use a better hash function to spread colors more evenly
         for &sender_id in &senders_to_color {
-            // Use absolute value of sender_id modulo colors.len() for consistent color assignment
-            let color_idx = (sender_id.abs() as usize) % colors.len();
+            // Use a simple hash function that mixes the bits better
+            // This helps avoid collisions where different IDs get the same color
+            let mut hash = sender_id.abs() as u64;
+            hash = hash.wrapping_mul(2654435761); // Knuth's multiplicative hash
+            hash = hash ^ (hash >> 16);
+            hash = hash.wrapping_mul(0x85ebca6b);
+            hash = hash ^ (hash >> 13);
+            hash = hash.wrapping_mul(0xc2b2ae35);
+            hash = hash ^ (hash >> 16);
+            
+            let color_idx = (hash as usize) % colors.len();
             let color = colors[color_idx];
             self.user_colors.insert(sender_id, color);
         }
@@ -573,7 +582,7 @@ impl App {
                                     } else {
                                         Color::Green
                                     };
-                                    let clean_msg = format!("{}{}:{}", prefix, sender_name, message_text);
+                                    let clean_msg = format!("{}{}: {}", prefix, sender_name, message_text);
                                     (clean_msg, Style::default().fg(color))
                                 } else {
                                     // Fallback if parsing fails
@@ -627,7 +636,7 @@ impl App {
                                     } else {
                                         Color::Cyan
                                     };
-                                    let clean_msg = format!("{}{}:{}", prefix, sender_name, message_text);
+                                    let clean_msg = format!("{}{}: {}", prefix, sender_name, message_text);
                                     (clean_msg, Style::default().fg(color))
                                 } else {
                                     // Fallback if parsing fails
