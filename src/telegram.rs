@@ -1,6 +1,7 @@
 use anyhow::Result;
 use grammers_client::{Client, Config as ClientConfig, InitParams, SignInError, Update};
 use grammers_session::Session;
+use grammers_tl_types as tl;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -163,7 +164,7 @@ impl TelegramClient {
         &self,
         chat_id: i64,
         limit: usize,
-    ) -> Result<Vec<(i32, i64, String, String, Option<i32>, Option<String>)>> {
+    ) -> Result<Vec<(i32, i64, String, String, Option<i32>, Option<String>, std::collections::HashMap<String, u32>)>> {
         let client = self.client.lock().await;
 
         let chat = match self.find_chat_inner(&client, chat_id).await? {
@@ -219,6 +220,29 @@ impl TelegramClient {
                 None
             };
 
+            // Get reactions from message
+            let mut reactions = std::collections::HashMap::new();
+            if let Some(raw_reactions) = &message.raw.reactions {
+                use grammers_tl_types::enums::MessageReactions;
+                if let MessageReactions::Reactions(reactions_data) = raw_reactions {
+                    for reaction_count in &reactions_data.results {
+                        use grammers_tl_types::enums::ReactionCount;
+                        if let ReactionCount::Count(count_data) = reaction_count {
+                            let emoji = match &count_data.reaction {
+                                grammers_tl_types::enums::Reaction::Emoji(emoji_data) => {
+                                    emoji_data.emoticon.clone()
+                                }
+                                grammers_tl_types::enums::Reaction::CustomEmoji(custom_emoji) => {
+                                    format!("[emoji:{:?}]", custom_emoji)
+                                }
+                                _ => continue,
+                            };
+                            *reactions.entry(emoji).or_insert(0) += count_data.count as u32;
+                        }
+                    }
+                }
+            }
+
             // Include messages with text or media
             if !text.is_empty() || media_type.is_some() {
                 messages.push((
@@ -228,6 +252,7 @@ impl TelegramClient {
                     text.to_string(),
                     reply_to_id,
                     media_type,
+                    reactions,
                 ));
             }
 
@@ -393,7 +418,7 @@ impl TelegramClient {
         chat_id: i64,
         query: &str,
         limit: usize,
-    ) -> Result<Vec<(i32, i64, String, String, Option<i32>)>> {
+    ) -> Result<Vec<(i32, i64, String, String, Option<i32>, std::collections::HashMap<String, u32>)>> {
         let client = self.client.lock().await;
         let chat = self.find_chat_inner(&client, chat_id).await?;
 
@@ -416,8 +441,31 @@ impl TelegramClient {
 
                 let reply_to_id = message.reply_to_message_id();
 
+                // Get reactions from message
+                let mut reactions = std::collections::HashMap::new();
+                if let Some(raw_reactions) = &message.raw.reactions {
+                    use grammers_tl_types::enums::MessageReactions;
+                    if let MessageReactions::Reactions(reactions_data) = raw_reactions {
+                        for reaction_count in &reactions_data.results {
+                            use grammers_tl_types::enums::ReactionCount;
+                            if let ReactionCount::Count(count_data) = reaction_count {
+                                let emoji = match &count_data.reaction {
+                                    grammers_tl_types::enums::Reaction::Emoji(emoji_data) => {
+                                        emoji_data.emoticon.clone()
+                                    }
+                                    grammers_tl_types::enums::Reaction::CustomEmoji(custom_emoji) => {
+                                        format!("[emoji:{:?}]", custom_emoji)
+                                    }
+                                    _ => continue,
+                                };
+                                *reactions.entry(emoji).or_insert(0) += count_data.count as u32;
+                            }
+                        }
+                    }
+                }
+
                 if !text.is_empty() {
-                    messages.push((message.id(), sender_id, sender_name, text.to_string(), reply_to_id));
+                    messages.push((message.id(), sender_id, sender_name, text.to_string(), reply_to_id, reactions));
                 }
                 count += 1;
             }

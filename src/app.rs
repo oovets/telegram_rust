@@ -637,7 +637,7 @@ impl App {
 
                 let msg_data: Vec<crate::widgets::MessageData> = raw_messages
                     .iter()
-                    .map(|(msg_id, sender_id, sender_name, text, reply_to_id, media_type)| {
+                    .map(|(msg_id, sender_id, sender_name, text, reply_to_id, media_type, reactions)| {
                         let reply_to_msg_id = *reply_to_id;
                         
                         crate::widgets::MessageData {
@@ -649,7 +649,7 @@ impl App {
                             timestamp: chrono::Utc::now().timestamp(),
                             media_type: media_type.clone(),
                             media_label: None,
-                            reactions: std::collections::HashMap::new(),
+                            reactions: reactions.clone(),
                             reply_to_msg_id,
                             reply_sender: None,
                             reply_text: None,
@@ -790,7 +790,7 @@ impl App {
                     // Convert to MessageData for proper formatting support
                     let msg_data: Vec<crate::widgets::MessageData> = raw_messages
                         .iter()
-                        .map(|(msg_id, sender_id, sender_name, text, reply_to_id, media_type)| {
+                        .map(|(msg_id, sender_id, sender_name, text, reply_to_id, media_type, reactions)| {
                             let reply_to_msg_id = *reply_to_id;
                             
                             crate::widgets::MessageData {
@@ -802,7 +802,7 @@ impl App {
                                 timestamp: chrono::Utc::now().timestamp(),
                                 media_type: media_type.clone(),
                                 media_label: None,
-                                reactions: std::collections::HashMap::new(),
+                                reactions: reactions.clone(),
                                 reply_to_msg_id,
                                 reply_sender: None,
                                 reply_text: None,
@@ -947,7 +947,7 @@ impl App {
                             // Convert to MessageData for proper formatting support
                             let msg_data: Vec<crate::widgets::MessageData> = raw_messages
                                 .iter()
-                                .map(|(msg_id, sender_id, sender_name, text, reply_to_id, media_type)| {
+                                .map(|(msg_id, sender_id, sender_name, text, reply_to_id, media_type, reactions)| {
                                     let reply_to_msg_id = *reply_to_id;
                                     
                                     crate::widgets::MessageData {
@@ -959,7 +959,7 @@ impl App {
                                         timestamp: chrono::Utc::now().timestamp(),
                                         media_type: media_type.clone(),
                                         media_label: None,
-                                        reactions: std::collections::HashMap::new(),
+                                        reactions: reactions.clone(),
                                         reply_to_msg_id,
                                         reply_sender: None,
                                         reply_text: None,

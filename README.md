@@ -146,7 +146,6 @@ Type in the input field:
 Automatically saves split layout and pane configuration between sessions.
 
 ### Planned
-- Media download and inline preview
 - Typing indicators
 - Online status
 - Advanced message filtering

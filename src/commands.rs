@@ -464,7 +464,7 @@ impl CommandHandler {
                         // Convert to MessageData for proper formatting support
                         let msg_data: Vec<crate::widgets::MessageData> = results
                             .iter()
-                            .map(|(msg_id, sender_id, sender_name, text, reply_to_id)| {
+                            .map(|(msg_id, sender_id, sender_name, text, reply_to_id, reactions)| {
                                 let reply_to_msg_id = *reply_to_id;
                                 
                                 crate::widgets::MessageData {
@@ -476,7 +476,7 @@ impl CommandHandler {
                                     timestamp: chrono::Utc::now().timestamp(),
                                     media_type: None,
                                     media_label: None,
-                                    reactions: std::collections::HashMap::new(),
+                                    reactions: reactions.clone(),
                                     reply_to_msg_id,
                                     reply_sender: None,
                                     reply_text: None,
