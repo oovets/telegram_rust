@@ -327,7 +327,124 @@ impl TelegramClient {
         Ok(())
     }
 
-    pub async fn _forward_message(
+    pub async fn resolve_username(&self, username: &str) -> Result<Option<(i64, String, bool)>> {
+        let username = username.trim_start_matches('@');
+        let client = self.client.lock().await;
+        match client.resolve_username(username).await? {
+            Some(chat) => {
+                let is_group = matches!(
+                    chat,
+                    grammers_client::types::Chat::Group(_) | grammers_client::types::Chat::Channel(_)
+                );
+                Ok(Some((chat.id(), chat.name().to_string(), is_group)))
+            }
+            None => Ok(None),
+        }
+    }
+
+    pub async fn create_group(&self, title: &str, user_ids: Vec<i64>) -> Result<i64> {
+        let client = self.client.lock().await;
+
+        // Resolve user IDs to InputUser via dialogs
+        let mut input_users = Vec::new();
+        for user_id in user_ids {
+            if let Some(chat) = self.find_chat_inner(&client, user_id).await? {
+                let packed = chat.pack();
+                if let Some(input_user) = packed.try_to_input_user() {
+                    input_users.push(input_user);
+                }
+            }
+        }
+
+        let result = client.invoke(&grammers_tl_types::functions::messages::CreateChat {
+            users: input_users,
+            title: title.to_string(),
+            ttl_period: None,
+        }).await?;
+
+        // Extract chat ID from the result
+        use grammers_tl_types::enums::messages::InvitedUsers;
+        let InvitedUsers::Users(invited) = result;
+
+        // Look through chats in the Updates
+        let chats = match &invited.updates {
+            grammers_tl_types::enums::Updates::Updates(u) => &u.chats,
+            grammers_tl_types::enums::Updates::Combined(u) => &u.chats,
+            _ => return Err(anyhow::anyhow!("Unexpected response from CreateChat")),
+        };
+
+        for chat in chats {
+            use grammers_tl_types::enums::Chat;
+            match chat {
+                Chat::Chat(c) => return Ok(c.id),
+                Chat::Forbidden(c) => return Ok(c.id),
+                _ => {}
+            }
+        }
+
+        anyhow::bail!("Could not determine new group ID")
+    }
+
+    pub async fn add_member(&self, chat_id: i64, username: &str) -> Result<()> {
+        let username = username.trim_start_matches('@');
+        let client = self.client.lock().await;
+        let chat = self.find_chat_inner(&client, chat_id).await?
+            .ok_or_else(|| anyhow::anyhow!("Chat not found"))?;
+        let user_chat = client.resolve_username(username).await?
+            .ok_or_else(|| anyhow::anyhow!("User '{}' not found", username))?;
+
+        let user_packed = user_chat.pack();
+        let input_user = user_packed.try_to_input_user()
+            .ok_or_else(|| anyhow::anyhow!("Cannot convert to input user"))?;
+
+        let chat_packed = chat.pack();
+        if let Some(channel) = chat_packed.try_to_input_channel() {
+            client.invoke(&grammers_tl_types::functions::channels::InviteToChannel {
+                channel,
+                users: vec![input_user],
+            }).await?;
+        } else if let Some(chat_id_inner) = chat_packed.try_to_chat_id() {
+            client.invoke(&grammers_tl_types::functions::messages::AddChatUser {
+                chat_id: chat_id_inner,
+                user_id: input_user,
+                fwd_limit: 100,
+            }).await?;
+        } else {
+            anyhow::bail!("Cannot add members to this chat type");
+        }
+
+        Ok(())
+    }
+
+    pub async fn remove_member(&self, chat_id: i64, username: &str) -> Result<()> {
+        let username = username.trim_start_matches('@');
+        let client = self.client.lock().await;
+        let chat = self.find_chat_inner(&client, chat_id).await?
+            .ok_or_else(|| anyhow::anyhow!("Chat not found"))?;
+        let user_chat = client.resolve_username(username).await?
+            .ok_or_else(|| anyhow::anyhow!("User '{}' not found", username))?;
+
+        client.kick_participant(&chat, &user_chat).await?;
+        Ok(())
+    }
+
+    pub async fn get_members(&self, chat_id: i64) -> Result<Vec<(i64, String, String)>> {
+        let client = self.client.lock().await;
+        let chat = self.find_chat_inner(&client, chat_id).await?
+            .ok_or_else(|| anyhow::anyhow!("Chat not found"))?;
+
+        let mut members = Vec::new();
+        let mut iter = client.iter_participants(&chat);
+        while let Some(participant) = iter.next().await? {
+            let role = format!("{:?}", participant.role);
+            let name = participant.user.first_name().to_string();
+            members.push((participant.user.id(), name, role));
+        }
+
+        Ok(members)
+    }
+
+    pub async fn forward_message(
         &self,
         from_chat_id: i64,
         message_id: i32,

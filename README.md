@@ -31,7 +31,7 @@ A fully functional Telegram client in the terminal, written in Rust for maximum 
   - Tab/Shift+Tab: Cycle focus between panes and chat list
   - Ctrl+Left/Right: Switch directly between panes
   - Alt+Enter: Multi-line input
-- **Commands**: /reply, /search, /media, /edit, /delete, /alias, /filter, etc.
+- **Commands**: /reply, /search, /media, /edit, /delete, /alias, /filter, /new, /newgroup, /add, /kick, /members, /forward
 - **Persistence**: Saves layout, settings and aliases between sessions
 - **Mouse Support**: Click to select panes and open chats
 
@@ -119,14 +119,21 @@ cargo run --release
 
 ### Commands
 Type in the input field:
-- `/reply <number>`: Reply to message
-- `/search <query>`: Search in active chat
-- `/media`: List media in chat
-- `/edit <id> <text>`: Edit message
-- `/delete <id>`: Delete message
-- `/alias <user> <alias>`: Set alias for user
-- `/filter sender <name>`: Filter by sender
-- `/clear`: Clear filter
+- `/reply <N>` or `/r <N>`: Reply to message #N (set reply mode or inline reply with `/r N text`)
+- `/search <query>` or `/s <query>`: Search messages in active chat
+- `/media <N>` or `/m <N>`: Download and open media from message #N
+- `/edit <N> <text>` or `/e <N> <text>`: Edit message #N
+- `/delete <N>` or `/d <N>`: Delete message #N
+- `/alias <N> <name>`: Set display alias for sender of message #N
+- `/unalias <N>`: Remove alias for sender of message #N
+- `/filter <type>`: Filter messages (photo, video, audio, doc, link, sticker, or sender name)
+- `/filter off`: Disable filter
+- `/new @username`: Open a DM with a user by username
+- `/newgroup <name>`: Create a new group chat
+- `/add @username`: Add a user to the current group
+- `/kick @username` or `/remove @username`: Remove a user from the current group
+- `/members`: List members of the current group
+- `/forward <N> @username` or `/fwd <N> @username`: Forward message #N to a user/chat
 
 ### Shortcuts
 - **Ctrl+Q**: Quit
@@ -158,9 +165,7 @@ Automatically saves split layout and pane configuration between sessions.
 ### Planned
 - Typing indicators
 - Online status
-- Advanced message filtering
 - Message search pagination
-- Channel management
 
 ## Development
 

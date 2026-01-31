@@ -539,11 +539,18 @@ impl CommandHandler {
         }
 
         let username = &cmd.args[0];
+        app.notify(&format!("Looking up {}...", username));
 
-        if let Some(pane) = app.panes.get_mut(pane_idx) {
-            pane.add_message(format!("Starting chat with {}...", username));
-            app.notify(&format!("Looking up {}...", username));
-            // Full implementation would resolve username via Telegram API and open the chat
+        match app.telegram.resolve_username(username).await {
+            Ok(Some((chat_id, chat_name, _is_group))) => {
+                app.open_chat_in_pane(pane_idx, chat_id, &chat_name).await;
+            }
+            Ok(None) => {
+                app.notify(&format!("User '{}' not found", username));
+            }
+            Err(e) => {
+                app.notify(&format!("Lookup failed: {}", e));
+            }
         }
 
         Ok(())
@@ -556,11 +563,18 @@ impl CommandHandler {
         }
 
         let group_name = cmd.args.join(" ");
+        app.notify(&format!("Creating group '{}'...", group_name));
 
-        if let Some(pane) = app.panes.get_mut(pane_idx) {
-            pane.add_message(format!("Creating group: {}...", group_name));
-            app.notify(&format!("Creating group '{}'...", group_name));
-            // Full implementation would call Telegram's CreateChatRequest
+        match app.telegram.create_group(&group_name, vec![]).await {
+            Ok(chat_id) => {
+                // Refresh chat list and open the new group
+                let _ = app.refresh_chats().await;
+                app.open_chat_in_pane(pane_idx, chat_id, &group_name).await;
+                app.notify(&format!("Group '{}' created", group_name));
+            }
+            Err(e) => {
+                app.notify(&format!("Failed to create group: {}", e));
+            }
         }
 
         Ok(())
@@ -573,18 +587,30 @@ impl CommandHandler {
         }
 
         let username = &cmd.args[0];
-
-        if let Some(pane) = app.panes.get(pane_idx) {
-            if pane.chat_id.is_none() {
-                app.notify("Open a group chat first");
-                return Ok(());
+        let chat_id = if let Some(pane) = app.panes.get(pane_idx) {
+            match pane.chat_id {
+                Some(id) => id,
+                None => {
+                    app.notify("Open a group chat first");
+                    return Ok(());
+                }
             }
-        }
+        } else {
+            return Ok(());
+        };
 
-        if let Some(pane) = app.panes.get_mut(pane_idx) {
-            pane.add_message(format!("Adding {} to group...", username));
-            app.notify(&format!("Adding {}...", username));
-            // Full implementation would call InviteToChannelRequest or AddChatUserRequest
+        app.notify(&format!("Adding {}...", username));
+
+        match app.telegram.add_member(chat_id, username).await {
+            Ok(_) => {
+                if let Some(pane) = app.panes.get_mut(pane_idx) {
+                    pane.add_message(format!("✓ Added {} to group", username));
+                }
+                app.notify(&format!("{} added to group", username));
+            }
+            Err(e) => {
+                app.notify(&format!("Failed to add {}: {}", username, e));
+            }
         }
 
         Ok(())
@@ -601,35 +627,64 @@ impl CommandHandler {
         }
 
         let username = &cmd.args[0];
-
-        if let Some(pane) = app.panes.get(pane_idx) {
-            if pane.chat_id.is_none() {
-                app.notify("Open a group chat first");
-                return Ok(());
+        let chat_id = if let Some(pane) = app.panes.get(pane_idx) {
+            match pane.chat_id {
+                Some(id) => id,
+                None => {
+                    app.notify("Open a group chat first");
+                    return Ok(());
+                }
             }
-        }
+        } else {
+            return Ok(());
+        };
 
-        if let Some(pane) = app.panes.get_mut(pane_idx) {
-            pane.add_message(format!("Removing {} from group...", username));
-            app.notify(&format!("Removing {}...", username));
-            // Full implementation would call EditBannedRequest or kick_participant
+        app.notify(&format!("Removing {}...", username));
+
+        match app.telegram.remove_member(chat_id, username).await {
+            Ok(_) => {
+                if let Some(pane) = app.panes.get_mut(pane_idx) {
+                    pane.add_message(format!("✓ Removed {} from group", username));
+                }
+                app.notify(&format!("{} removed from group", username));
+            }
+            Err(e) => {
+                app.notify(&format!("Failed to remove {}: {}", username, e));
+            }
         }
 
         Ok(())
     }
 
     async fn handle_members(app: &mut App, _cmd: &Command, pane_idx: usize) -> Result<()> {
-        if let Some(pane) = app.panes.get(pane_idx) {
-            if pane.chat_id.is_none() {
-                app.notify("Open a group chat first");
-                return Ok(());
+        let chat_id = if let Some(pane) = app.panes.get(pane_idx) {
+            match pane.chat_id {
+                Some(id) => id,
+                None => {
+                    app.notify("Open a group chat first");
+                    return Ok(());
+                }
             }
-        }
+        } else {
+            return Ok(());
+        };
 
-        if let Some(pane) = app.panes.get_mut(pane_idx) {
-            pane.add_message("Fetching group members...".to_string());
-            app.notify("Loading members...");
-            // Full implementation would call get_participants
+        app.notify("Loading members...");
+
+        match app.telegram.get_members(chat_id).await {
+            Ok(members) => {
+                if let Some(pane) = app.panes.get_mut(pane_idx) {
+                    pane.add_message(format!("--- Members ({}) ---", members.len()));
+                    for (id, name, role) in &members {
+                        pane.add_message(format!("  {} (id:{}) - {}", name, id, role));
+                    }
+                    pane.add_message("---".to_string());
+                }
+                app.notify(&format!("{} members", members.len()));
+            }
+            Err(e) => {
+                app.notify(&format!("Failed to load members: {}", e));
+            }
         }
 
         Ok(())
@@ -651,15 +706,49 @@ impl CommandHandler {
 
         let target = &cmd.args[1];
 
-        if let Some(pane) = app.panes.get_mut(pane_idx) {
-            if let Some(_from_chat_id) = pane.chat_id {
-                pane.add_message(format!(
-                    "Forwarding message #{} to {}...",
-                    msg_num, target
-                ));
-                app.notify(&format!("Forwarding #{} to {}...", msg_num, target));
-                // Full implementation would resolve target username, get to_chat_id,
-                // then call app.telegram.forward_message(from_chat_id, msg_num, to_chat_id)
+        let (from_chat_id, message_id) = if let Some(pane) = app.panes.get(pane_idx) {
+            let from_id = match pane.chat_id {
+                Some(id) => id,
+                None => {
+                    app.notify("No chat selected");
+                    return Ok(());
+                }
+            };
+            // Get actual telegram message ID from msg_data
+            let msg_id = match pane.msg_data.get((msg_num - 1) as usize) {
+                Some(msg) => msg.msg_id,
+                None => {
+                    app.notify(&format!("Message #{} not found", msg_num));
+                    return Ok(());
+                }
+            };
+            (from_id, msg_id)
+        } else {
+            return Ok(());
+        };
+
+        app.notify(&format!("Forwarding #{} to {}...", msg_num, target));
+
+        // Resolve target
+        match app.telegram.resolve_username(target).await {
+            Ok(Some((to_chat_id, _name, _is_group))) => {
+                match app.telegram.forward_message(from_chat_id, message_id, to_chat_id).await {
+                    Ok(_) => {
+                        if let Some(pane) = app.panes.get_mut(pane_idx) {
+                            pane.add_message(format!("✓ Forwarded #{} to {}", msg_num, target));
+                        }
+                        app.notify(&format!("Forwarded to {}", target));
+                    }
+                    Err(e) => {
+                        app.notify(&format!("Forward failed: {}", e));
+                    }
+                }
+            }
+            Ok(None) => {
+                app.notify(&format!("User '{}' not found", target));
+            }
+            Err(e) => {
+                app.notify(&format!("Lookup failed: {}", e));
             }
         }
 

@@ -800,6 +800,52 @@ impl App {
             Some(std::time::Instant::now() + std::time::Duration::from_secs(duration_secs));
     }
 
+    pub async fn open_chat_in_pane(&mut self, pane_idx: usize, chat_id: i64, chat_name: &str) {
+        let msg_data = match self.telegram.get_messages(chat_id, 50).await {
+            Ok(raw_messages) => raw_messages
+                .iter()
+                .map(|(msg_id, sender_id, sender_name, text, reply_to_id, media_type, reactions)| {
+                    crate::widgets::MessageData {
+                        msg_id: *msg_id,
+                        sender_id: *sender_id,
+                        sender_name: sender_name.clone(),
+                        text: text.clone(),
+                        is_outgoing: *sender_id == self.my_user_id,
+                        timestamp: chrono::Utc::now().timestamp(),
+                        media_type: media_type.clone(),
+                        media_label: None,
+                        reactions: reactions.clone(),
+                        reply_to_msg_id: *reply_to_id,
+                        reply_sender: None,
+                        reply_text: None,
+                    }
+                })
+                .collect(),
+            Err(_) => Vec::new(),
+        };
+
+        if let Some(pane) = self.panes.get_mut(pane_idx) {
+            pane.chat_id = Some(chat_id);
+            pane.chat_name = chat_name.to_string();
+            pane.msg_data = msg_data;
+            pane.messages.clear();
+            pane.reply_to_message = None;
+            pane.hide_reply_preview();
+            pane.scroll_offset = 0;
+            pane.format_cache.clear();
+
+            // Set username from chats list if available
+            if let Some(chat_info) = self.chats.iter().find(|c| c.id == chat_id) {
+                pane.username = chat_info.username.clone();
+            }
+        }
+
+        // Mark chat as read
+        if let Some(chat_info) = self.chats.iter_mut().find(|c| c.id == chat_id) {
+            chat_info.unread = 0;
+        }
+    }
+
     pub async fn load_pane_messages_if_needed(&mut self, pane_idx: usize) {
         if let Some(pane) = self.panes.get(pane_idx) {
             if let Some(_chat_id) = pane.chat_id {
