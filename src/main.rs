@@ -22,7 +22,7 @@ use app::App;
 #[tokio::main]
 async fn main() -> Result<()> {
     // Create app BEFORE entering TUI mode (so authentication can work)
-    let app = App::new().await?;
+    let mut app = App::new().await?;
 
     // Setup terminal
     enable_raw_mode()?;
@@ -32,7 +32,10 @@ async fn main() -> Result<()> {
     let mut terminal = Terminal::new(backend)?;
 
     // Run app
-    let res = run_app(&mut terminal, app).await;
+    let res = run_app(&mut terminal, &mut app).await;
+    
+    // Save state before exiting (even if there was an error)
+    let _ = app.save_state();
 
     // Restore terminal
     disable_raw_mode()?;
@@ -43,16 +46,12 @@ async fn main() -> Result<()> {
     )?;
     terminal.show_cursor()?;
 
-    if let Err(err) = res {
-        eprintln!("Error: {:?}", err);
-    }
-
     Ok(())
 }
 
 async fn run_app<B: ratatui::backend::Backend>(
     terminal: &mut Terminal<B>,
-    mut app: App,
+    app: &mut App,
 ) -> Result<()> {
     loop {
         terminal.draw(|f| app.draw(f))?;
@@ -78,6 +77,10 @@ async fn run_app<B: ratatui::backend::Backend>(
                     // Ctrl+B: Split horizontal
                     KeyCode::Char('b') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                         app.split_horizontal();
+                    }
+                    // Ctrl+X: Toggle split direction
+                    KeyCode::Char('x') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        app.toggle_split_direction();
                     }
                     // Ctrl+W: Close pane
                     KeyCode::Char('w') if key.modifiers.contains(KeyModifiers::CONTROL) => {

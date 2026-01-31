@@ -4,11 +4,14 @@ use std::collections::HashMap;
 use std::fs;
 
 use crate::config::Config;
+use crate::split_view::PaneNode;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LayoutData {
     pub panes: Vec<PaneState>,
     pub focused_pane: usize,
+    #[serde(default)]
+    pub pane_tree: Option<PaneNode>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -16,6 +19,10 @@ pub struct PaneState {
     pub chat_id: Option<i64>,
     pub chat_name: String,
     pub scroll_offset: usize,
+    #[serde(default)]
+    pub filter_type: Option<String>,
+    #[serde(default)]
+    pub filter_value: Option<String>,
 }
 
 impl LayoutData {
@@ -25,8 +32,11 @@ impl LayoutData {
                 chat_id: None,
                 chat_name: "No chat selected".to_string(),
                 scroll_offset: 0,
+                filter_type: None,
+                filter_value: None,
             }],
             focused_pane: 0,
+            pane_tree: None,
         }
     }
 

@@ -34,6 +34,7 @@ pub struct App {
     pub status_expire: Option<std::time::Instant>,
     pub pane_areas: std::collections::HashMap<usize, Rect>, // Track pane screen positions
     pub chat_list_area: Option<Rect>, // Track chat list area for mouse clicks
+    pub cursor_blink_timer: std::time::Instant, // For blinking cursor
 
     // Settings
     pub show_reactions: bool,
@@ -69,15 +70,73 @@ impl App {
         // Load initial chats
         let chats = telegram.get_dialogs().await.unwrap_or_else(|_| Vec::new());
 
-        Ok(Self {
+        // Load pane tree first to know which panes we need
+        let (pane_tree, required_indices) = if let Some(saved_tree) = app_state.layout.pane_tree {
+            let indices = saved_tree.get_pane_indices();
+            (saved_tree, indices)
+        } else {
+            // No saved tree, create default based on number of saved panes
+            let tree = if !app_state.layout.panes.is_empty() && app_state.layout.panes.len() > 1 {
+                let mut t = PaneNode::new_single(0);
+                for i in 1..app_state.layout.panes.len() {
+                    t.split(SplitDirection::Vertical, i);
+                }
+                t
+            } else {
+                PaneNode::new_single(0)
+            };
+            let indices = tree.get_pane_indices();
+            (tree, indices)
+        };
+        
+        // Determine how many panes we need (max of what tree references and what's saved)
+        let max_required_idx = required_indices.iter().max().copied().unwrap_or(0);
+        let total_panes_needed = (max_required_idx + 1).max(app_state.layout.panes.len()).max(1);
+        
+        // Load panes - create panes for all indices up to total_panes_needed
+        let mut panes: Vec<ChatPane> = Vec::new();
+        for i in 0..total_panes_needed {
+            if let Some(ps) = app_state.layout.panes.get(i) {
+                // Load saved pane state
+                let mut pane = ChatPane::new();
+                pane.chat_id = ps.chat_id;
+                pane.chat_name = ps.chat_name.clone();
+                pane.scroll_offset = ps.scroll_offset;
+                // Load filter settings
+                if let Some(ref filter_type_str) = ps.filter_type {
+                    pane.filter_type = Some(match filter_type_str.as_str() {
+                        "sender" => crate::widgets::FilterType::Sender,
+                        "media" => crate::widgets::FilterType::Media,
+                        "link" => crate::widgets::FilterType::Link,
+                        _ => {
+                            panes.push(pane);
+                            continue;
+                        }
+                    });
+                }
+                pane.filter_value = ps.filter_value.clone();
+                panes.push(pane);
+            } else {
+                // Create empty pane for missing index
+                panes.push(ChatPane::new());
+            }
+        }
+        
+        let focused_pane_idx = if app_state.layout.focused_pane < panes.len() {
+            app_state.layout.focused_pane
+        } else {
+            0
+        };
+
+        let mut app = Self {
             config,
             telegram,
             my_user_id,
             chats,
             selected_chat_idx: 0,
-            panes: vec![ChatPane::new()],
-            focused_pane_idx: 0,
-            pane_tree: PaneNode::new_single(0),
+            panes,
+            focused_pane_idx,
+            pane_tree,
             input_history: Vec::new(),
             history_idx: None,
             history_temp: String::new(),
@@ -87,6 +146,7 @@ impl App {
             status_expire: None,
             chat_list_area: None,
             pane_areas: std::collections::HashMap::new(),
+            cursor_blink_timer: std::time::Instant::now(),
             show_reactions: app_state.settings.show_reactions,
             show_notifications: app_state.settings.show_notifications,
             compact_mode: app_state.settings.compact_mode,
@@ -94,10 +154,66 @@ impl App {
             show_line_numbers: app_state.settings.show_line_numbers,
             show_timestamps: app_state.settings.show_timestamps,
             show_chat_list: true,
-        })
+        };
+
+        // Load messages for all panes that have a chat_id
+        app.load_saved_chat_messages().await?;
+
+        Ok(app)
+    }
+
+    /// Load messages for all panes that have a saved chat_id
+    async fn load_saved_chat_messages(&mut self) -> Result<()> {
+        for (idx, pane) in self.panes.iter_mut().enumerate() {
+            if let Some(chat_id) = pane.chat_id {
+                // Try to load messages for this chat
+                match self.telegram.get_messages(chat_id, 50).await {
+                    Ok(raw_messages) => {
+                        if !raw_messages.is_empty() {
+                            let msg_data: Vec<crate::widgets::MessageData> = raw_messages
+                                .iter()
+                                .map(|(msg_id, sender_id, sender_name, text, reply_to_id, media_type, reactions)| {
+                                    let reply_to_msg_id = *reply_to_id;
+                                    
+                                    crate::widgets::MessageData {
+                                        msg_id: *msg_id,
+                                        sender_id: *sender_id,
+                                        sender_name: sender_name.clone(),
+                                        text: text.clone(),
+                                        is_outgoing: *sender_id == self.my_user_id,
+                                        timestamp: chrono::Utc::now().timestamp(),
+                                        media_type: media_type.clone(),
+                                        media_label: None,
+                                        reactions: reactions.clone(),
+                                        reply_to_msg_id,
+                                        reply_sender: None,
+                                        reply_text: None,
+                                    }
+                                })
+                                .collect();
+                            
+                            pane.msg_data = msg_data;
+                            pane.format_cache.clear(); // Clear cache so messages are re-rendered
+                            
+                            // Also try to find username from chats list
+                            if let Some(chat_info) = self.chats.iter().find(|c| c.id == chat_id) {
+                                pane.username = chat_info.username.clone();
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        // Log error but continue loading other panes
+                        eprintln!("Failed to load messages for chat {} in pane {}: {}", chat_id, idx, e);
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 
     pub fn draw(&mut self, f: &mut Frame) {
+        // Update cursor blink timer for blinking cursor
+        // This will be checked in draw_chat_pane_impl
         // Check typing indicators for expiry
         for pane in &mut self.panes {
             pane.check_typing_expired();
@@ -160,12 +276,18 @@ impl App {
     }
 
     fn draw_chat_list(&self, f: &mut Frame, area: Rect) {
+        // Find which chat is open in the focused pane
+        let active_chat_id = self.panes
+            .get(self.focused_pane_idx)
+            .and_then(|p| p.chat_id);
+        
         let items: Vec<ListItem> = self
             .chats
             .iter()
             .enumerate()
             .map(|(idx, chat)| {
-                let style = if idx == self.selected_chat_idx {
+                // Highlight if this chat is open in the focused pane
+                let style = if Some(chat.id) == active_chat_id {
                     Style::default()
                         .fg(Color::Yellow)
                         .add_modifier(Modifier::BOLD)
@@ -414,7 +536,19 @@ impl App {
         } else {
             "Input"
         };
-        let input_text = if is_focused { &pane.input_buffer } else { "" };
+        let mut input_text = if is_focused { pane.input_buffer.clone() } else { String::new() };
+        
+        // Add blinking cursor when focused
+        if is_focused && !self.focus_on_chat_list {
+            let elapsed = self.cursor_blink_timer.elapsed();
+            let blink_cycle = (elapsed.as_millis() / 500) % 2; // Blink every 500ms
+            if blink_cycle == 0 {
+                input_text.push('|');
+            } else {
+                input_text.push('_');
+            }
+        }
+        
         let input = Paragraph::new(input_text)
             .block(Block::default().borders(Borders::ALL).title(input_title));
         f.render_widget(input, input_chunk);
@@ -431,6 +565,13 @@ impl App {
         self.status_message = Some(message.to_string());
         self.status_expire =
             Some(std::time::Instant::now() + std::time::Duration::from_secs(3));
+    }
+
+    /// Show a status notification with custom timeout duration
+    pub fn notify_with_duration(&mut self, message: &str, duration_secs: u64) {
+        self.status_message = Some(message.to_string());
+        self.status_expire =
+            Some(std::time::Instant::now() + std::time::Duration::from_secs(duration_secs));
     }
 
     // =========================================================================
@@ -486,6 +627,44 @@ impl App {
                 false
             }
             _ => false,
+        }
+    }
+
+    pub fn toggle_split_direction(&mut self) {
+        // Find the parent split node that directly contains the focused pane
+        if Self::toggle_split_direction_recursive(&mut self.pane_tree, self.focused_pane_idx) {
+            self.notify("Split direction toggled");
+        } else {
+            self.notify("No split to toggle - pane is not in a split");
+        }
+    }
+
+    fn toggle_split_direction_recursive(node: &mut PaneNode, target_idx: usize) -> bool {
+        match node {
+            PaneNode::Single(_) => false,
+            PaneNode::Split { direction, children } => {
+                // Check if target_idx is directly a child of this split (not nested deeper)
+                let is_direct_child = children.iter().any(|child| {
+                    matches!(child.as_ref(), PaneNode::Single(idx) if *idx == target_idx)
+                });
+
+                if is_direct_child {
+                    // This is the parent split - toggle its direction
+                    *direction = match *direction {
+                        SplitDirection::Vertical => SplitDirection::Horizontal,
+                        SplitDirection::Horizontal => SplitDirection::Vertical,
+                    };
+                    true
+                } else {
+                    // Target might be nested deeper, search in children
+                    for child in children.iter_mut() {
+                        if Self::toggle_split_direction_recursive(child, target_idx) {
+                            return true;
+                        }
+                    }
+                    false
+                }
+            }
         }
     }
 
@@ -662,6 +841,7 @@ impl App {
                     pane.chat_name = chat_name;
                     pane.username = chat_username;
                     pane.msg_data = msg_data;
+                    pane.messages.clear(); // Clear status messages when switching chats
                     pane.reply_to_message = None;
                     pane.hide_reply_preview();
                     pane.scroll_offset = 0;
@@ -816,7 +996,7 @@ impl App {
                         pane.chat_name = chat_name;
                         pane.username = chat_username;
                         pane.msg_data = msg_data;
-                        // Don't clear messages - they may contain status messages
+                        pane.messages.clear(); // Clear status messages when switching chats
                         pane.reply_to_message = None;
                         pane.hide_reply_preview();
                         // Don't set scroll_offset yet - let it be calculated during render
@@ -1031,13 +1211,23 @@ impl App {
             panes: self
                 .panes
                 .iter()
-                .map(|p| PaneState {
-                    chat_id: p.chat_id,
-                    chat_name: p.chat_name.clone(),
-                    scroll_offset: p.scroll_offset,
+                .map(|p| {
+                    let filter_type_str = p.filter_type.as_ref().map(|ft| match ft {
+                        crate::widgets::FilterType::Sender => "sender".to_string(),
+                        crate::widgets::FilterType::Media => "media".to_string(),
+                        crate::widgets::FilterType::Link => "link".to_string(),
+                    });
+                    PaneState {
+                        chat_id: p.chat_id,
+                        chat_name: p.chat_name.clone(),
+                        scroll_offset: p.scroll_offset,
+                        filter_type: filter_type_str,
+                        filter_value: p.filter_value.clone(),
+                    }
                 })
                 .collect(),
             focused_pane: self.focused_pane_idx,
+            pane_tree: Some(self.pane_tree.clone()),
         };
         layout.save(&self.config)?;
 

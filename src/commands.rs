@@ -180,9 +180,11 @@ impl CommandHandler {
                 .await
             {
                 Ok(path) => {
-                    if let Some(pane) = app.panes.get_mut(pane_idx) {
-                        pane.add_message(format!("✓ Downloaded to {}", path));
-                    }
+                    // Show notification for 10 seconds instead of adding to chat
+                    app.notify_with_duration(
+                        &format!("✓ Downloaded to {}", path),
+                        10,
+                    );
                     #[cfg(target_os = "macos")]
                     {
                         let _ = std::process::Command::new("open").arg(&path).spawn();
@@ -191,13 +193,16 @@ impl CommandHandler {
                     {
                         let _ = std::process::Command::new("xdg-open").arg(&path).spawn();
                     }
-                    app.notify(&format!(
-                        "Opened: {}",
-                        std::path::Path::new(&path)
-                            .file_name()
-                            .unwrap_or_default()
-                            .to_string_lossy()
-                    ));
+                    app.notify_with_duration(
+                        &format!(
+                            "Opened: {}",
+                            std::path::Path::new(&path)
+                                .file_name()
+                                .unwrap_or_default()
+                                .to_string_lossy()
+                        ),
+                        10,
+                    );
                 }
                 Err(e) => {
                     if let Some(pane) = app.panes.get_mut(pane_idx) {
