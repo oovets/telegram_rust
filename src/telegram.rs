@@ -720,7 +720,7 @@ impl TelegramClient {
                         }
                     }
 
-                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
                 }
             });
 

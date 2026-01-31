@@ -35,6 +35,12 @@ pub struct Settings {
     
     #[serde(default = "default_true")]
     pub show_timestamps: bool,
+    
+    #[serde(default = "default_true")]
+    pub show_user_colors: bool,
+    
+    #[serde(default = "default_true")]
+    pub show_borders: bool,
 }
 
 impl Default for Settings {
@@ -46,6 +52,8 @@ impl Default for Settings {
             show_emojis: true,
             show_line_numbers: false,
             show_timestamps: true,
+            show_user_colors: true,
+            show_borders: true,
         }
     }
 }

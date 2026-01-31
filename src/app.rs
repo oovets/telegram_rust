@@ -34,7 +34,7 @@ pub struct App {
     pub status_expire: Option<std::time::Instant>,
     pub pane_areas: std::collections::HashMap<usize, Rect>, // Track pane screen positions
     pub chat_list_area: Option<Rect>, // Track chat list area for mouse clicks
-    pub cursor_blink_timer: std::time::Instant, // For blinking cursor
+    pub needs_redraw: bool,
 
     // Settings
     pub show_reactions: bool,
@@ -149,7 +149,7 @@ impl App {
             status_expire: None,
             chat_list_area: None,
             pane_areas: std::collections::HashMap::new(),
-            cursor_blink_timer: std::time::Instant::now(),
+            needs_redraw: true,
             show_reactions: app_state.settings.show_reactions,
             show_notifications: app_state.settings.show_notifications,
             compact_mode: app_state.settings.compact_mode,
@@ -735,15 +735,9 @@ impl App {
         };
         let mut input_text = if is_focused { pane.input_buffer.clone() } else { String::new() };
         
-        // Add blinking cursor when focused
+        // Show block cursor when focused
         if is_focused && !self.focus_on_chat_list {
-            let elapsed = self.cursor_blink_timer.elapsed();
-            let blink_cycle = (elapsed.as_millis() / 500) % 2; // Blink every 500ms
-            if blink_cycle == 0 {
-                input_text.push('|');
-            } else {
-                input_text.push('_');
-            }
+            input_text.push('█');
         }
         
         let input_block = if self.show_borders {
@@ -1356,9 +1350,10 @@ impl App {
     // New message handling
     // =========================================================================
 
-    pub async fn process_telegram_events(&mut self) -> Result<()> {
+    pub async fn process_telegram_events(&mut self) -> Result<bool> {
         // Process incoming updates
         let updates = self.telegram.poll_updates().await?;
+        let had_updates = !updates.is_empty();
 
         for update in updates {
             match update {
@@ -1479,7 +1474,7 @@ impl App {
             }
         }
 
-        Ok(())
+        Ok(had_updates)
     }
 
     // =========================================================================

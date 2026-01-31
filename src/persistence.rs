@@ -141,6 +141,12 @@ pub struct AppSettings {
     
     #[serde(default = "default_true")]
     pub show_timestamps: bool,
+    
+    #[serde(default = "default_true")]
+    pub show_user_colors: bool,
+    
+    #[serde(default = "default_true")]
+    pub show_borders: bool,
 }
 
 impl Default for AppSettings {
@@ -152,6 +158,8 @@ impl Default for AppSettings {
             show_emojis: true,
             show_line_numbers: false,
             show_timestamps: true,
+            show_user_colors: true,
+            show_borders: true,
         }
     }
 }
@@ -170,6 +178,8 @@ impl AppState {
                 show_emojis: config.settings.show_emojis,
                 show_line_numbers: config.settings.show_line_numbers,
                 show_timestamps: config.settings.show_timestamps,
+                show_user_colors: config.settings.show_user_colors,
+                show_borders: config.settings.show_borders,
             },
             aliases: Aliases::load(config)?,
             layout: LayoutData::load(config)?,

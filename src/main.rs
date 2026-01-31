@@ -53,16 +53,34 @@ async fn run_app<B: ratatui::backend::Backend>(
     terminal: &mut Terminal<B>,
     app: &mut App,
 ) -> Result<()> {
+    let mut last_telegram_check = std::time::Instant::now();
+
     loop {
-        terminal.draw(|f| app.draw(f))?;
+        // Only redraw when something changed
+        if app.needs_redraw {
+            terminal.draw(|f| app.draw(f))?;
+            app.needs_redraw = false;
+        }
 
-        // Process Telegram events FIRST - check for new messages frequently
-        app.process_telegram_events().await?;
+        // Process Telegram events every 500ms
+        if last_telegram_check.elapsed() >= std::time::Duration::from_millis(500) {
+            let had_updates = app.process_telegram_events().await?;
+            last_telegram_check = std::time::Instant::now();
+            if had_updates {
+                app.needs_redraw = true;
+            }
+        }
 
-        if event::poll(std::time::Duration::from_millis(50))? {
+        // Sleep until next telegram check (or cap at 500ms)
+        let poll_timeout = std::time::Duration::from_millis(500)
+            .saturating_sub(last_telegram_check.elapsed())
+            .max(std::time::Duration::from_millis(16));
+
+        if event::poll(poll_timeout)? {
             let event = event::read()?;
             match event {
                 Event::Key(key) => {
+                    app.needs_redraw = true;
                     match key.code {
                     // Ctrl+Q: Quit
                     KeyCode::Char('q') if key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -119,6 +137,14 @@ async fn run_app<B: ratatui::backend::Backend>(
                     KeyCode::Char('t') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                         app.toggle_timestamps();
                     }
+                    // Ctrl+U: Toggle user colors
+                    KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        app.toggle_user_colors();
+                    }
+                    // Ctrl+Y: Toggle borders
+                    KeyCode::Char('y') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        app.toggle_borders();
+                    }
                     // Esc: Cancel reply mode
                     KeyCode::Esc => {
                         if let Some(pane) = app.panes.get_mut(app.focused_pane_idx) {
@@ -165,6 +191,7 @@ async fn run_app<B: ratatui::backend::Backend>(
                     }
                 }
                 Event::Mouse(mouse) => {
+                    app.needs_redraw = true;
                     if let event::MouseEventKind::Down(event::MouseButton::Left) = mouse.kind {
                         // Check if clicking on chat list first
                         if let Some(area) = app.chat_list_area {
@@ -181,14 +208,10 @@ async fn run_app<B: ratatui::backend::Backend>(
                     }
                 }
                 Event::Resize(_, _) => {
-                    // Terminal resize - ratatui handles this automatically on next draw
+                    app.needs_redraw = true;
                 }
                 _ => {}
             }
-        } else {
-            // No events, but still process Telegram updates (non-blocking)
-            // This ensures we get new messages even when user isn't typing
-            app.process_telegram_events().await?;
         }
     }
 
