@@ -57,6 +57,7 @@ macro_rules! log_info {
     };
 }
 
+#[cfg(test)]
 pub fn sanitize_chat_name(name: &str) -> String {
     name.replace('[', "\\[")
         .replace(']', "\\]")
@@ -64,6 +65,7 @@ pub fn sanitize_chat_name(name: &str) -> String {
         .to_string()
 }
 
+#[cfg(test)]
 pub fn get_user_display_name(
     first_name: Option<&str>,
     last_name: Option<&str>,

@@ -5,7 +5,8 @@ use std::collections::HashMap;
 use crate::widgets::MessageData;
 
 /// Extract YouTube video ID from a URL
-pub fn extract_youtube_id(url: &str) -> Option<String> {
+#[cfg(test)]
+fn extract_youtube_id(url: &str) -> Option<String> {
     // youtube.com/watch?v=ID
     if let Some(pos) = url.find("v=") {
         let id = &url[pos + 2..];

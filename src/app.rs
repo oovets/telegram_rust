@@ -782,7 +782,6 @@ impl App {
 
     pub async fn refresh_chats(&mut self) -> Result<()> {
         self.chats = self.telegram.get_dialogs().await?;
-        self.notify("Chats refreshed");
         Ok(())
     }
 
@@ -915,7 +914,6 @@ impl App {
     pub fn toggle_split_direction(&mut self) {
         // Find the parent split node that directly contains the focused pane
         if Self::toggle_split_direction_recursive(&mut self.pane_tree, self.focused_pane_idx) {
-            self.notify("Split direction toggled");
         } else {
             self.notify("No split to toggle - pane is not in a split");
         }
@@ -961,9 +959,6 @@ impl App {
         let removed = self.pane_tree.find_and_remove_pane(focused_idx);
         
         if removed {
-            let pane_count_after = self.pane_tree.count_panes();
-            self.notify(&format!("Closed pane {} ({} -> {} panes)", focused_idx, pane_count_before, pane_count_after));
-            
             let remaining = self.pane_tree.get_pane_indices();
             if !remaining.is_empty() {
                 self.focused_pane_idx = remaining[0];
@@ -1001,7 +996,6 @@ impl App {
                 } else {
                     // Last pane, go back to chat list
                     self.focus_on_chat_list = true;
-                    self.notify("Focus: Chat List");
                 }
             } else {
                 // Current pane not found, reset to first
@@ -1029,7 +1023,6 @@ impl App {
                     self.notify(&format!("Focus: Pane #{}", self.focused_pane_idx + 1));
                 } else {
                     self.focus_on_chat_list = true;
-                    self.notify("Focus: Chat List");
                 }
             }
         }

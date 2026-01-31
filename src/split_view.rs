@@ -128,6 +128,7 @@ impl PaneNode {
         }
     }
 
+    #[cfg(test)]
     pub fn get_next_pane_idx(&self, current: usize) -> Option<usize> {
         let indices = self.get_pane_indices();
         if let Some(pos) = indices.iter().position(|&idx| idx == current) {
