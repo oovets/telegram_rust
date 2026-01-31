@@ -763,9 +763,10 @@ impl App {
         };
         let mut input_text = if is_focused { pane.input_buffer.clone() } else { String::new() };
         
-        // Show block cursor when focused
+        // Show block cursor at cursor position when focused
         if is_focused && !self.focus_on_chat_list {
-            input_text.push('█');
+            let cursor_pos = pane.input_cursor.min(input_text.len());
+            input_text.insert(cursor_pos, '█');
         }
         
         let input_block = if self.show_borders {
@@ -1181,10 +1182,12 @@ impl App {
                             self.history_temp = pane.input_buffer.clone();
                             self.history_idx = Some(self.input_history.len() - 1);
                             pane.input_buffer = self.input_history[self.input_history.len() - 1].clone();
+                            pane.input_cursor = pane.input_buffer.len();
                     }
                         Some(idx) if idx > 0 => {
                             self.history_idx = Some(idx - 1);
                             pane.input_buffer = self.input_history[idx - 1].clone();
+                            pane.input_cursor = pane.input_buffer.len();
                         }
                         _ => {}
                     }
@@ -1205,10 +1208,12 @@ impl App {
                     if idx + 1 < self.input_history.len() {
                         self.history_idx = Some(idx + 1);
                         pane.input_buffer = self.input_history[idx + 1].clone();
+                        pane.input_cursor = pane.input_buffer.len();
                     } else {
                         // Back to current input
                         self.history_idx = None;
                         pane.input_buffer = self.history_temp.clone();
+                        pane.input_cursor = pane.input_buffer.len();
                     }
                 }
             }
@@ -1246,6 +1251,7 @@ impl App {
             let (completed, hint) = try_autocomplete(&pane.input_buffer);
             if let Some(completed) = completed {
                 pane.input_buffer = completed;
+                pane.input_cursor = pane.input_buffer.len();
             } else if let Some(hint) = hint {
                 self.notify(&hint);
             } else {
@@ -1337,6 +1343,7 @@ impl App {
                 if handled {
                     if let Some(pane) = self.panes.get_mut(self.focused_pane_idx) {
                         pane.input_buffer.clear();
+                    pane.input_cursor = 0;
                     }
                     return Ok(());
                 }
@@ -1368,6 +1375,7 @@ impl App {
                     pane.reply_to_message = None;
                     pane.hide_reply_preview();
                     pane.input_buffer.clear();
+                    pane.input_cursor = 0;
                     
                     // THEN: Send message in background - don't wait!
                     let telegram = self.telegram.clone();
@@ -1397,6 +1405,7 @@ impl App {
                     pane.format_cache.clear();
                     
                     pane.input_buffer.clear();
+                    pane.input_cursor = 0;
                     
                     // THEN: Send message in background - don't wait!
                     let telegram = self.telegram.clone();
@@ -1413,16 +1422,69 @@ impl App {
 
     pub fn handle_char(&mut self, c: char) {
         if let Some(pane) = self.panes.get_mut(self.focused_pane_idx) {
-            pane.input_buffer.push(c);
+            pane.input_buffer.insert(pane.input_cursor, c);
+            pane.input_cursor += c.len_utf8();
         }
         self.history_idx = None;
     }
 
     pub fn handle_backspace(&mut self) {
         if let Some(pane) = self.panes.get_mut(self.focused_pane_idx) {
-            pane.input_buffer.pop();
+            if pane.input_cursor > 0 {
+                let prev = pane.input_buffer[..pane.input_cursor]
+                    .char_indices()
+                    .next_back()
+                    .map(|(i, _)| i)
+                    .unwrap_or(0);
+                pane.input_buffer.remove(prev);
+                pane.input_cursor = prev;
+            }
         }
         self.history_idx = None;
+    }
+
+    pub fn handle_delete(&mut self) {
+        if let Some(pane) = self.panes.get_mut(self.focused_pane_idx) {
+            if pane.input_cursor < pane.input_buffer.len() {
+                pane.input_buffer.remove(pane.input_cursor);
+            }
+        }
+    }
+
+    pub fn handle_input_left(&mut self) {
+        if let Some(pane) = self.panes.get_mut(self.focused_pane_idx) {
+            if pane.input_cursor > 0 {
+                pane.input_cursor = pane.input_buffer[..pane.input_cursor]
+                    .char_indices()
+                    .next_back()
+                    .map(|(i, _)| i)
+                    .unwrap_or(0);
+            }
+        }
+    }
+
+    pub fn handle_input_right(&mut self) {
+        if let Some(pane) = self.panes.get_mut(self.focused_pane_idx) {
+            if pane.input_cursor < pane.input_buffer.len() {
+                pane.input_cursor = pane.input_buffer[pane.input_cursor..]
+                    .char_indices()
+                    .nth(1)
+                    .map(|(i, _)| pane.input_cursor + i)
+                    .unwrap_or(pane.input_buffer.len());
+            }
+        }
+    }
+
+    pub fn handle_home(&mut self) {
+        if let Some(pane) = self.panes.get_mut(self.focused_pane_idx) {
+            pane.input_cursor = 0;
+        }
+    }
+
+    pub fn handle_end(&mut self) {
+        if let Some(pane) = self.panes.get_mut(self.focused_pane_idx) {
+            pane.input_cursor = pane.input_buffer.len();
+        }
     }
 
     // =========================================================================

@@ -43,6 +43,7 @@ pub struct ChatPane {
     pub unread_count_at_load: u32,
     pub format_cache: HashMap<FormatCacheKey, Vec<String>>,
     pub input_buffer: String,          // Per-pane input buffer
+    pub input_cursor: usize,           // Cursor byte position in input_buffer
 }
 
 #[derive(Hash, Eq, PartialEq, Clone, Debug)]
@@ -78,6 +79,7 @@ impl ChatPane {
             _unread_count: 0,
             unread_count_at_load: 0,
             input_buffer: String::new(),
+            input_cursor: 0,
             format_cache: HashMap::new(),
         }
     }

@@ -172,6 +172,31 @@ async fn run_app<B: ratatui::backend::Backend>(
                         app.handle_tab();
                     }
                     // Arrow keys
+                    KeyCode::Left => {
+                        if !app.focus_on_chat_list {
+                            app.handle_input_left();
+                        }
+                    }
+                    KeyCode::Right => {
+                        if !app.focus_on_chat_list {
+                            app.handle_input_right();
+                        }
+                    }
+                    KeyCode::Home => {
+                        if !app.focus_on_chat_list {
+                            app.handle_home();
+                        }
+                    }
+                    KeyCode::End => {
+                        if !app.focus_on_chat_list {
+                            app.handle_end();
+                        }
+                    }
+                    KeyCode::Delete => {
+                        if !app.focus_on_chat_list {
+                            app.handle_delete();
+                        }
+                    }
                     KeyCode::Up => {
                         app.handle_up();
                     }
