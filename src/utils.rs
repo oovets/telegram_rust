@@ -57,14 +57,14 @@ macro_rules! log_info {
     };
 }
 
-pub fn _sanitize_chat_name(name: &str) -> String {
+pub fn sanitize_chat_name(name: &str) -> String {
     name.replace('[', "\\[")
         .replace(']', "\\]")
         .trim()
         .to_string()
 }
 
-pub fn _get_user_display_name(
+pub fn get_user_display_name(
     first_name: Option<&str>,
     last_name: Option<&str>,
     username: Option<&str>,

@@ -4,6 +4,29 @@ use std::collections::HashMap;
 
 use crate::widgets::MessageData;
 
+/// Extract YouTube video ID from a URL
+pub fn extract_youtube_id(url: &str) -> Option<String> {
+    // youtube.com/watch?v=ID
+    if let Some(pos) = url.find("v=") {
+        let id = &url[pos + 2..];
+        let id = id.split('&').next().unwrap_or(id);
+        if !id.is_empty() {
+            return Some(id.to_string());
+        }
+    }
+    // youtu.be/ID
+    if url.contains("youtu.be/") {
+        if let Some(pos) = url.find("youtu.be/") {
+            let id = &url[pos + 9..];
+            let id = id.split('?').next().unwrap_or(id);
+            if !id.is_empty() {
+                return Some(id.to_string());
+            }
+        }
+    }
+    None
+}
+
 /// Format message reactions as a string
 pub fn format_reactions(reactions: &HashMap<String, u32>) -> String {
     if reactions.is_empty() {
