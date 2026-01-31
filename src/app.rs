@@ -156,10 +156,62 @@ impl App {
             show_chat_list: true,
         };
 
-        // Load messages for all panes that have a chat_id
-        app.load_saved_chat_messages().await?;
+        // Load messages for focused pane at startup (quick, only one pane)
+        // Other panes will load lazily when user switches to them
+        if let Some(pane) = app.panes.get(app.focused_pane_idx) {
+            if let Some(chat_id) = pane.chat_id {
+                if pane.msg_data.is_empty() {
+                    // Load messages for focused pane only - this is fast
+                    let _ = app.refresh_pane_messages(app.focused_pane_idx).await;
+                }
+            }
+        }
 
         Ok(app)
+    }
+
+    /// Refresh messages for a specific pane
+    async fn refresh_pane_messages(&mut self, pane_idx: usize) -> Result<()> {
+        if let Some(pane) = self.panes.get(pane_idx) {
+            if let Some(chat_id) = pane.chat_id {
+                match self.telegram.get_messages(chat_id, 50).await {
+                    Ok(raw_messages) => {
+                        if !raw_messages.is_empty() {
+                            let msg_data: Vec<crate::widgets::MessageData> = raw_messages
+                                .iter()
+                                .map(|(msg_id, sender_id, sender_name, text, reply_to_id, media_type, reactions)| {
+                                    let reply_to_msg_id = *reply_to_id;
+                                    
+                                    crate::widgets::MessageData {
+                                        msg_id: *msg_id,
+                                        sender_id: *sender_id,
+                                        sender_name: sender_name.clone(),
+                                        text: text.clone(),
+                                        is_outgoing: *sender_id == self.my_user_id,
+                                        timestamp: chrono::Utc::now().timestamp(),
+                                        media_type: media_type.clone(),
+                                        media_label: None,
+                                        reactions: reactions.clone(),
+                                        reply_to_msg_id,
+                                        reply_sender: None,
+                                        reply_text: None,
+                                    }
+                                })
+                                .collect();
+                            
+                            if let Some(pane) = self.panes.get_mut(pane_idx) {
+                                pane.msg_data = msg_data;
+                                pane.format_cache.clear(); // Clear cache so messages are re-rendered
+                            }
+                        }
+                    }
+                    Err(_) => {
+                        // Silently fail - messages will update via polling
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Load messages for all panes that have a saved chat_id
@@ -287,13 +339,18 @@ impl App {
             .enumerate()
             .map(|(idx, chat)| {
                 // Highlight if this chat is open in the focused pane
-                let style = if Some(chat.id) == active_chat_id {
+                let mut style = if Some(chat.id) == active_chat_id {
                     Style::default()
                         .fg(Color::Yellow)
                         .add_modifier(Modifier::BOLD)
                 } else {
                     Style::default()
                 };
+
+                // Invert colors for chats with unread messages
+                if chat.unread > 0 {
+                    style = style.add_modifier(Modifier::REVERSED);
+                }
 
                 let unread_str = if chat.unread > 0 {
                     format!(" ({})", chat.unread)
@@ -572,6 +629,16 @@ impl App {
         self.status_message = Some(message.to_string());
         self.status_expire =
             Some(std::time::Instant::now() + std::time::Duration::from_secs(duration_secs));
+    }
+
+    pub async fn load_pane_messages_if_needed(&mut self, pane_idx: usize) {
+        if let Some(pane) = self.panes.get(pane_idx) {
+            if let Some(chat_id) = pane.chat_id {
+                if pane.msg_data.is_empty() {
+                    let _ = self.refresh_pane_messages(pane_idx).await;
+                }
+            }
+        }
     }
 
     // =========================================================================
@@ -1048,18 +1115,65 @@ impl App {
                 if let (Some(chat_id), Some(reply_to_id)) =
                     (pane.chat_id, pane.reply_to_message)
                 {
-                    self.telegram
-                        .reply_to_message(chat_id, reply_to_id, &input_text)
-                        .await?;
+                    // FIRST: Add message DIRECTLY to pane IMMEDIATELY - no waiting!
+                    let new_msg = crate::widgets::MessageData {
+                        msg_id: 0, // Temporary ID
+                        sender_id: self.my_user_id,
+                        sender_name: "You".to_string(),
+                        text: input_text.clone(),
+                        is_outgoing: true,
+                        timestamp: chrono::Utc::now().timestamp(),
+                        media_type: None,
+                        media_label: None,
+                        reactions: std::collections::HashMap::new(),
+                        reply_to_msg_id: Some(reply_to_id),
+                        reply_sender: None,
+                        reply_text: None,
+                    };
+                    pane.msg_data.push(new_msg);
+                    pane.format_cache.clear();
+                    
                     pane.reply_to_message = None;
                     pane.hide_reply_preview();
-                    pane.add_message(format!("✓ Replied to message ID {}", reply_to_id));
+                    pane.input_buffer.clear();
+                    
+                    // THEN: Send message in background - don't wait!
+                    let telegram = self.telegram.clone();
+                    let chat_id_copy = chat_id;
+                    let reply_to_id_copy = reply_to_id;
+                    let input_text_copy = input_text.clone();
+                    tokio::spawn(async move {
+                        let _ = telegram.reply_to_message(chat_id_copy, reply_to_id_copy, &input_text_copy).await;
+                    });
                 } else if let Some(chat_id) = pane.chat_id {
-                    self.telegram
-                        .send_message(chat_id, &input_text)
-                        .await?;
+                    // FIRST: Add message DIRECTLY to pane IMMEDIATELY - no waiting!
+                    let new_msg = crate::widgets::MessageData {
+                        msg_id: 0, // Temporary ID
+                        sender_id: self.my_user_id,
+                        sender_name: "You".to_string(),
+                        text: input_text.clone(),
+                        is_outgoing: true,
+                        timestamp: chrono::Utc::now().timestamp(),
+                        media_type: None,
+                        media_label: None,
+                        reactions: std::collections::HashMap::new(),
+                        reply_to_msg_id: None,
+                        reply_sender: None,
+                        reply_text: None,
+                    };
+                    pane.msg_data.push(new_msg);
+                    pane.format_cache.clear();
+                    
+                    pane.input_buffer.clear();
+                    
+                    // THEN: Send message in background - don't wait!
+                    let telegram = self.telegram.clone();
+                    let chat_id_copy = chat_id;
+                    let input_text_copy = input_text.clone();
+                    tokio::spawn(async move {
+                        let _ = telegram.send_message(chat_id_copy, &input_text_copy).await;
+                    });
                 }
-                pane.input_buffer.clear();
             }
         }
         Ok(())
@@ -1110,50 +1224,57 @@ impl App {
                         .collect();
 
                     if !matching_panes.is_empty() {
-                        // Reload messages for matching panes
-                        let target_id = if self
-                            .panes
-                            .iter()
-                            .any(|p| p.chat_id == Some(chat_id))
-                        {
-                            chat_id
-                        } else {
-                            normalized_id
-                        };
-
-                        if let Ok(raw_messages) =
-                            self.telegram.get_messages(target_id, 50).await
-                        {
-                            // Convert to MessageData for proper formatting support
-                            let msg_data: Vec<crate::widgets::MessageData> = raw_messages
+                        // For outgoing messages, don't reload immediately - they're already shown optimistically
+                        // Only reload for incoming messages
+                        if !is_outgoing {
+                            // Reload messages for matching panes
+                            let target_id = if self
+                                .panes
                                 .iter()
-                                .map(|(msg_id, sender_id, sender_name, text, reply_to_id, media_type, reactions)| {
-                                    let reply_to_msg_id = *reply_to_id;
-                                    
-                                    crate::widgets::MessageData {
-                                        msg_id: *msg_id,
-                                        sender_id: *sender_id,
-                                        sender_name: sender_name.clone(),
-                                        text: text.clone(),
-                                        is_outgoing: *sender_id == self.my_user_id,
-                                        timestamp: chrono::Utc::now().timestamp(),
-                                        media_type: media_type.clone(),
-                                        media_label: None,
-                                        reactions: reactions.clone(),
-                                        reply_to_msg_id,
-                                        reply_sender: None,
-                                        reply_text: None,
-                                    }
-                                })
-                                .collect();
+                                .any(|p| p.chat_id == Some(chat_id))
+                            {
+                                chat_id
+                            } else {
+                                normalized_id
+                            };
 
-                            for idx in &matching_panes {
-                                if let Some(pane) = self.panes.get_mut(*idx) {
-                                    pane.msg_data = msg_data.clone();
-                                    // Don't clear messages - they may contain status messages
+                            if let Ok(raw_messages) =
+                                self.telegram.get_messages(target_id, 50).await
+                            {
+                                // Convert to MessageData for proper formatting support
+                                let msg_data: Vec<crate::widgets::MessageData> = raw_messages
+                                    .iter()
+                                    .map(|(msg_id, sender_id, sender_name, text, reply_to_id, media_type, reactions)| {
+                                        let reply_to_msg_id = *reply_to_id;
+                                        
+                                        crate::widgets::MessageData {
+                                            msg_id: *msg_id,
+                                            sender_id: *sender_id,
+                                            sender_name: sender_name.clone(),
+                                            text: text.clone(),
+                                            is_outgoing: *sender_id == self.my_user_id,
+                                            timestamp: chrono::Utc::now().timestamp(),
+                                            media_type: media_type.clone(),
+                                            media_label: None,
+                                            reactions: reactions.clone(),
+                                            reply_to_msg_id,
+                                            reply_sender: None,
+                                            reply_text: None,
+                                        }
+                                    })
+                                    .collect();
+
+                                for idx in &matching_panes {
+                                    if let Some(pane) = self.panes.get_mut(*idx) {
+                                        pane.msg_data = msg_data.clone();
+                                        pane.format_cache.clear(); // Clear cache so messages are re-rendered
+                                        // Don't clear messages - they may contain status messages
+                                    }
                                 }
                             }
                         }
+                        // For outgoing messages, the optimistic message is already shown
+                        // It will be updated naturally when we refresh later
                     } else {
                         // Increment unread for chats not in view
                         if let Some(chat_info) = self

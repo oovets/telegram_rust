@@ -78,8 +78,8 @@ async fn run_app<B: ratatui::backend::Backend>(
                     KeyCode::Char('b') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                         app.split_horizontal();
                     }
-                    // Ctrl+X: Toggle split direction
-                    KeyCode::Char('x') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    // Ctrl+K: Toggle split direction
+                    KeyCode::Char('k') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                         app.toggle_split_direction();
                     }
                     // Ctrl+W: Close pane
@@ -173,6 +173,8 @@ async fn run_app<B: ratatui::backend::Backend>(
                         }
                         // Check if clicking on a pane
                         app.handle_mouse_click(mouse.column, mouse.row);
+                        // Load messages for focused pane if needed
+                        app.load_pane_messages_if_needed(app.focused_pane_idx).await;
                     }
                 }
                 Event::Resize(_, _) => {

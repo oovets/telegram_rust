@@ -22,6 +22,7 @@ pub enum TelegramUpdate {
     },
 }
 
+#[derive(Clone)]
 pub struct TelegramClient {
     client: Arc<Mutex<Client>>,
     update_handle: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
