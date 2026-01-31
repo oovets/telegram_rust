@@ -1,6 +1,6 @@
 use chrono::{DateTime, Local};
 
-pub fn format_message_time(timestamp: i64) -> String {
+pub fn _format_message_time(timestamp: i64) -> String {
     use chrono::Utc;
 
     let datetime_utc: DateTime<chrono::Utc> =
@@ -17,7 +17,7 @@ pub fn format_message_time(timestamp: i64) -> String {
     }
 }
 
-pub fn log_message(message: &str, level: &str) {
+pub fn _log_message(message: &str, level: &str) {
     use std::fs::OpenOptions;
     use std::io::Write;
 
@@ -37,7 +37,7 @@ pub fn log_message(message: &str, level: &str) {
 #[macro_export]
 macro_rules! log_error {
     ($($arg:tt)*) => {
-        $crate::utils::log_message(&format!($($arg)*), "ERROR")
+        $crate::utils::_log_message(&format!($($arg)*), "ERROR")
     };
 }
 
@@ -45,7 +45,7 @@ macro_rules! log_error {
 macro_rules! log_debug {
     ($($arg:tt)*) => {
         if cfg!(debug_assertions) {
-            $crate::utils::log_message(&format!($($arg)*), "DEBUG")
+            $crate::utils::_log_message(&format!($($arg)*), "DEBUG")
         }
     };
 }
@@ -53,18 +53,18 @@ macro_rules! log_debug {
 #[macro_export]
 macro_rules! log_info {
     ($($arg:tt)*) => {
-        $crate::utils::log_message(&format!($($arg)*), "INFO")
+        $crate::utils::_log_message(&format!($($arg)*), "INFO")
     };
 }
 
-pub fn sanitize_chat_name(name: &str) -> String {
+pub fn _sanitize_chat_name(name: &str) -> String {
     name.replace('[', "\\[")
         .replace(']', "\\]")
         .trim()
         .to_string()
 }
 
-pub fn get_user_display_name(
+pub fn _get_user_display_name(
     first_name: Option<&str>,
     last_name: Option<&str>,
     username: Option<&str>,

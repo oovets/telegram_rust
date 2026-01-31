@@ -1,11 +1,5 @@
 use std::collections::HashMap;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SplitDirection {
-    Horizontal,
-    Vertical,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FilterType {
     Sender,
@@ -45,7 +39,7 @@ pub struct ChatPane {
     pub typing_expire: Option<std::time::Instant>,
     pub online_status: String,
     pub pinned_message: Option<String>,
-    pub unread_count: u32,
+    pub _unread_count: u32,
     pub unread_count_at_load: u32,
     pub format_cache: HashMap<FormatCacheKey, Vec<String>>,
     pub input_buffer: String,          // Per-pane input buffer
@@ -81,7 +75,7 @@ impl ChatPane {
             typing_expire: None,
             online_status: String::new(),
             pinned_message: None,
-            unread_count: 0,
+            _unread_count: 0,
             unread_count_at_load: 0,
             input_buffer: String::new(),
             format_cache: HashMap::new(),
@@ -160,7 +154,7 @@ impl ChatPane {
     }
 
     /// Check if a message matches the current filter
-    pub fn message_matches_filter(&self, data: &MessageData) -> bool {
+    pub fn _message_matches_filter(&self, data: &MessageData) -> bool {
         match (&self.filter_type, &self.filter_value) {
             (None, _) => true,
             (Some(FilterType::Sender), Some(value)) => {
@@ -190,38 +184,4 @@ impl Default for ChatPane {
     fn default() -> Self {
         Self::new()
     }
-}
-
-pub struct SplitContainer {
-    pub direction: SplitDirection,
-    pub children: Vec<SplitItem>,
-}
-
-pub enum SplitItem {
-    Pane(ChatPane),
-    Split(Box<SplitContainer>),
-}
-
-impl SplitContainer {
-    pub fn new(direction: SplitDirection) -> Self {
-        Self {
-            direction,
-            children: Vec::new(),
-        }
-    }
-
-    pub fn add_pane(&mut self, pane: ChatPane) {
-        self.children.push(SplitItem::Pane(pane));
-    }
-
-    pub fn add_split(&mut self, split: SplitContainer) {
-        self.children.push(SplitItem::Split(Box::new(split)));
-    }
-}
-
-pub struct ChatListItem {
-    pub chat_id: i64,
-    pub name: String,
-    pub unread: u32,
-    pub username: Option<String>,
 }

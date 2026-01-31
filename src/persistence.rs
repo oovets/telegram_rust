@@ -96,7 +96,7 @@ impl Aliases {
         Ok(())
     }
 
-    pub fn get(&self, user_id: i64) -> Option<&String> {
+    pub fn _get(&self, user_id: i64) -> Option<&String> {
         self.map.get(&user_id)
     }
 
@@ -176,7 +176,7 @@ impl AppState {
         })
     }
 
-    pub fn save(&self, config: &Config) -> Result<()> {
+    pub fn _save(&self, config: &Config) -> Result<()> {
         self.aliases.save(config)?;
         self.layout.save(config)?;
         // Settings are saved as part of config

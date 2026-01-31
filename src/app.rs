@@ -53,7 +53,7 @@ pub struct ChatInfo {
     pub name: String,
     pub username: Option<String>,
     pub unread: u32,
-    pub is_channel: bool,
+    pub _is_channel: bool,
     pub is_group: bool,
 }
 
@@ -211,7 +211,7 @@ impl App {
 
     /// Load messages for all panes that have a saved chat_id
     async fn load_saved_chat_messages(&mut self) -> Result<()> {
-        for (idx, pane) in self.panes.iter_mut().enumerate() {
+        for (_idx, pane) in self.panes.iter_mut().enumerate() {
             if let Some(chat_id) = pane.chat_id {
                 // Try to load messages for this chat
                 match self.telegram.get_messages(chat_id, 50).await {
@@ -1328,7 +1328,7 @@ impl App {
             match update {
                 crate::telegram::TelegramUpdate::NewMessage {
                     chat_id,
-                    sender_name: _,
+                    _sender_name: _,
                     text,
                     is_outgoing,
                 } => {

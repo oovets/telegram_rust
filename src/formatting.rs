@@ -77,22 +77,6 @@ pub fn shorten_urls(text: &str, max_len: usize) -> String {
     result
 }
 
-/// Shorten a URL using is.gd API
-pub fn shorten_url_via_isgd(url: &str) -> String {
-    // Use blocking reqwest or just truncate - for TUI we use truncation
-    // to avoid blocking the event loop. Python uses urllib with timeout=3.
-    if url.chars().count() > 60 {
-        let truncate_at = url
-            .char_indices()
-            .nth(57)
-            .map(|(i, _)| i)
-            .unwrap_or(url.len());
-        format!("{}...", &url[..truncate_at])
-    } else {
-        url.to_string()
-    }
-}
-
 /// Strip emojis from text (if emoji display is disabled)
 pub fn strip_emojis(text: &str) -> String {
     let emoji_regex = Regex::new(
@@ -199,25 +183,6 @@ pub fn format_timestamp(timestamp: i64) -> String {
     } else {
         datetime.format("%Y-%m-%d %H:%M").to_string()
     }
-}
-
-/// Extract YouTube video ID from URL
-pub fn extract_youtube_id(url: &str) -> Option<String> {
-    let youtube_regex =
-        Regex::new(r"(?:youtube\.com/watch\?v=|youtu\.be/)([a-zA-Z0-9_-]+)").unwrap();
-    youtube_regex
-        .captures(url)
-        .and_then(|cap| cap.get(1))
-        .map(|m| m.as_str().to_string())
-}
-
-/// Extract Spotify track ID from URL
-pub fn extract_spotify_id(url: &str) -> Option<String> {
-    let spotify_regex = Regex::new(r"open\.spotify\.com/track/([a-zA-Z0-9]+)").unwrap();
-    spotify_regex
-        .captures(url)
-        .and_then(|cap| cap.get(1))
-        .map(|m| m.as_str().to_string())
 }
 
 /// Format all messages for a pane display - matching Python's _format_messages
@@ -398,85 +363,6 @@ pub fn format_messages_for_display(
     }
 
     lines
-}
-
-/// Format a single message for display (builder pattern)
-pub struct MessageFormatter {
-    pub show_emojis: bool,
-    pub show_reactions: bool,
-    pub show_timestamps: bool,
-    pub show_line_numbers: bool,
-    pub compact_mode: bool,
-    pub max_url_length: usize,
-}
-
-impl Default for MessageFormatter {
-    fn default() -> Self {
-        Self {
-            show_emojis: true,
-            show_reactions: true,
-            show_timestamps: true,
-            show_line_numbers: false,
-            compact_mode: false,
-            max_url_length: 60,
-        }
-    }
-}
-
-impl MessageFormatter {
-    pub fn format_message(
-        &self,
-        line_num: Option<usize>,
-        sender: &str,
-        text: &str,
-        timestamp: Option<i64>,
-        reactions: Option<&HashMap<String, u32>>,
-        media_type: Option<&str>,
-    ) -> String {
-        let mut parts = Vec::new();
-
-        // Line number
-        if self.show_line_numbers {
-            if let Some(num) = line_num {
-                parts.push(format!("{:>3}.", num));
-            }
-        }
-
-        // Timestamp
-        if self.show_timestamps {
-            if let Some(ts) = timestamp {
-                parts.push(format!("[{}]", format_timestamp(ts)));
-            }
-        }
-
-        // Sender
-        parts.push(format!("{}:", sender));
-
-        // Media label
-        if let Some(media) = media_type {
-            parts.push(get_media_label(media, None));
-        }
-
-        // Message text
-        let mut message_text = text.to_string();
-        if !self.show_emojis {
-            message_text = strip_emojis(&message_text);
-        }
-        message_text = shorten_urls(&message_text, self.max_url_length);
-        parts.push(message_text);
-
-        // Reactions
-        if self.show_reactions {
-            if let Some(reacts) = reactions {
-                let reaction_str = format_reactions(reacts);
-                if !reaction_str.is_empty() {
-                    parts.push(format!("[{}]", reaction_str));
-                }
-            }
-        }
-
-        parts.join(" ")
-    }
 }
 
 #[cfg(test)]

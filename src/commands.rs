@@ -6,7 +6,7 @@ use crate::widgets::FilterType;
 pub struct Command {
     pub name: String,
     pub args: Vec<String>,
-    pub full_text: String,
+    pub _full_text: String,
 }
 
 impl Command {
@@ -26,7 +26,7 @@ impl Command {
         Some(Command {
             name,
             args,
-            full_text: text.to_string(),
+            _full_text: text.to_string(),
         })
     }
 }
@@ -156,6 +156,8 @@ impl CommandHandler {
     }
 
     async fn handle_media(app: &mut App, cmd: &Command, pane_idx: usize) -> Result<()> {
+        crate::log_info!("handle_media: Command received with args: {:?}", cmd.args);
+        
         if cmd.args.is_empty() {
             app.notify("Usage: /media N or /m N");
             return Ok(());
@@ -169,22 +171,43 @@ impl CommandHandler {
             }
         };
 
-        let chat_id = app.panes.get(pane_idx).and_then(|p| p.chat_id);
-        if let Some(chat_id) = chat_id {
+        crate::log_info!("handle_media: Parsed msg_num: {}", msg_num);
+
+        // Get the actual Telegram message ID from the pane's message data
+        let (chat_id, telegram_msg_id) = if let Some(pane) = app.panes.get(pane_idx) {
+            if let Some(chat_id) = pane.chat_id {
+                // msg_num is 1-indexed, msg_data is 0-indexed
+                if let Some(msg_data) = pane.msg_data.get((msg_num - 1) as usize) {
+                    crate::log_info!("handle_media: Found message in pane.msg_data - telegram msg_id: {}, text: '{}'", 
+                        msg_data.msg_id, msg_data.text);
+                    (Some(chat_id), Some(msg_data.msg_id))
+                } else {
+                    crate::log_error!("handle_media: Message #{} not found in pane (have {} messages)", 
+                        msg_num, pane.msg_data.len());
+                    app.notify(&format!("Message #{} not found", msg_num));
+                    return Ok(());
+                }
+            } else {
+                crate::log_error!("handle_media: No chat_id in pane");
+                app.notify("No chat selected");
+                return Ok(());
+            }
+        } else {
+            crate::log_error!("handle_media: Pane not found");
+            app.notify("Pane not found");
+            return Ok(());
+        };
+
+        if let (Some(chat_id), Some(telegram_msg_id)) = (chat_id, telegram_msg_id) {
             app.notify(&format!("Downloading media from #{}...", msg_num));
             let downloads_dir = std::env::temp_dir();
 
             match app
                 .telegram
-                .download_media(chat_id, msg_num, &downloads_dir)
+                .download_media_by_id(chat_id, telegram_msg_id, &downloads_dir)
                 .await
             {
                 Ok(path) => {
-                    // Show notification for 10 seconds instead of adding to chat
-                    app.notify_with_duration(
-                        &format!("✓ Downloaded to {}", path),
-                        10,
-                    );
                     #[cfg(target_os = "macos")]
                     {
                         let _ = std::process::Command::new("open").arg(&path).spawn();
@@ -195,20 +218,17 @@ impl CommandHandler {
                     }
                     app.notify_with_duration(
                         &format!(
-                            "Opened: {}",
+                            "✓ {}",
                             std::path::Path::new(&path)
                                 .file_name()
                                 .unwrap_or_default()
                                 .to_string_lossy()
                         ),
-                        10,
+                        3,
                     );
                 }
                 Err(e) => {
-                    if let Some(pane) = app.panes.get_mut(pane_idx) {
-                        pane.add_message(format!("✗ Download failed: {}", e));
-                    }
-                    app.notify(&format!("Download failed: {}", e));
+                    app.notify(&format!("✗ {}", e));
                 }
             }
         }
