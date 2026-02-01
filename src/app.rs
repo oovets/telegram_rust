@@ -985,14 +985,12 @@ impl App {
             // Going from chat list to first pane
             self.focus_on_chat_list = false;
             self.focused_pane_idx = all_panes[0];
-            self.notify(&format!("Focus: Pane #{}", self.focused_pane_idx + 1));
         } else {
             // Find current pane position
             if let Some(current_pos) = all_panes.iter().position(|&idx| idx == self.focused_pane_idx) {
                 if current_pos + 1 < all_panes.len() {
                     // Go to next pane
                     self.focused_pane_idx = all_panes[current_pos + 1];
-                    self.notify(&format!("Focus: Pane #{}", self.focused_pane_idx + 1));
                 } else {
                     // Last pane, go back to chat list
                     self.focus_on_chat_list = true;
@@ -1000,7 +998,6 @@ impl App {
             } else {
                 // Current pane not found, reset to first
                 self.focused_pane_idx = all_panes[0];
-                self.notify(&format!("Focus: Pane #{}", self.focused_pane_idx + 1));
             }
         }
     }
@@ -1015,12 +1012,10 @@ impl App {
             // Go to last pane
             self.focus_on_chat_list = false;
             self.focused_pane_idx = *all_panes.last().unwrap();
-            self.notify(&format!("Focus: Pane #{}", self.focused_pane_idx + 1));
         } else {
             if let Some(current_pos) = all_panes.iter().position(|&idx| idx == self.focused_pane_idx) {
                 if current_pos > 0 {
                     self.focused_pane_idx = all_panes[current_pos - 1];
-                    self.notify(&format!("Focus: Pane #{}", self.focused_pane_idx + 1));
                 } else {
                     self.focus_on_chat_list = true;
                 }
@@ -1037,7 +1032,6 @@ impl App {
             let next = (current_pos + 1) % all_panes.len();
             self.focused_pane_idx = all_panes[next];
             self.focus_on_chat_list = false;
-            self.notify(&format!("Focus: Pane #{}", self.focused_pane_idx + 1));
         }
     }
 
@@ -1050,7 +1044,6 @@ impl App {
             let prev = if current_pos > 0 { current_pos - 1 } else { all_panes.len() - 1 };
             self.focused_pane_idx = all_panes[prev];
             self.focus_on_chat_list = false;
-            self.notify(&format!("Focus: Pane #{}", self.focused_pane_idx + 1));
         }
     }
 
@@ -1129,7 +1122,6 @@ impl App {
                 // Clicked on this pane - make it active
                 self.focused_pane_idx = pane_idx;
                 self.focus_on_chat_list = false;
-                self.notify(&format!("Active: Pane #{}", pane_idx + 1));
                 return;
             }
         }
