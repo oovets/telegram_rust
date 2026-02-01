@@ -289,9 +289,12 @@ impl App {
             .split(f.area());
 
         let (chat_area, pane_area) = if self.show_chat_list {
+            let total_width = outer[0].width;
+            let base_chat_width = total_width.saturating_mul(20) / 100;
+            let chat_width = base_chat_width.saturating_sub(10).max(10);
             let chunks = Layout::default()
                 .direction(Direction::Horizontal)
-                .constraints([Constraint::Percentage(20), Constraint::Percentage(80)])
+                .constraints([Constraint::Length(chat_width), Constraint::Min(0)])
                 .split(outer[0]);
             (Some(chunks[0]), chunks[1])
         } else {
@@ -372,13 +375,14 @@ impl App {
             .get(self.focused_pane_idx)
             .and_then(|p| p.chat_id);
         
+        let max_width = area.width.saturating_sub(6).max(1) as usize;
         let items: Vec<ListItem> = self
             .chats
             .iter()
             .enumerate()
             .map(|(_idx, chat)| {
                 // Highlight if this chat is open in the focused pane
-                let mut style = if Some(chat.id) == active_chat_id {
+                let base_style = if Some(chat.id) == active_chat_id {
                     Style::default()
                         .fg(Color::Yellow)
                         .add_modifier(Modifier::BOLD)
@@ -386,37 +390,62 @@ impl App {
                     Style::default()
                 };
 
-                // Invert colors for chats with unread messages
-                if chat.unread > 0 {
-                    style = style.add_modifier(Modifier::REVERSED);
-                }
-
-                let unread_str = if chat.unread > 0 {
-                    format!(" ({})", chat.unread)
+                let unread_marker = if chat.unread > 0 { "▶ " } else { "" };
+                let unread_count = if chat.unread > 0 {
+                    format!("({}) ", chat.unread)
                 } else {
                     String::new()
                 };
 
-                // Build full content first
-                let mut content = format!("{}{}", chat.name, unread_str);
+                let mut name_part = chat.name.clone();
                 if let Some(ref username) = chat.username {
                     if !username.is_empty() {
-                        content.push_str(&format!(" {}", username));
+                        name_part.push_str(&format!(" {}", username));
                     }
                 }
 
-                // Then truncate if needed
-                let max_width = area.width.saturating_sub(6).max(1) as usize;
-                let char_count = content.chars().count();
-                if char_count > max_width && max_width > 0 {
-                    let nth_index = max_width.saturating_sub(1);
-                    if let Some((truncate_at, _)) = content.char_indices().nth(nth_index) {
-                        content.truncate(truncate_at);
-                        content.push('…');
+                let mut spans = Vec::new();
+                if !unread_marker.is_empty() {
+                    spans.push(ratatui::text::Span::styled(
+                        unread_marker.to_string(),
+                        Style::default().fg(Color::Red),
+                    ));
+                }
+                if !unread_count.is_empty() {
+                    spans.push(ratatui::text::Span::styled(
+                        unread_count,
+                        base_style,
+                    ));
+                }
+                spans.push(ratatui::text::Span::styled(name_part, base_style));
+
+                // Truncate spans to fit
+                let total_chars: usize = spans.iter().map(|s| s.content.chars().count()).sum();
+                let truncated = total_chars > max_width && max_width > 0;
+                let mut remaining = if truncated { max_width.saturating_sub(1) } else { max_width };
+                let mut out_spans: Vec<ratatui::text::Span> = Vec::new();
+
+                for span in spans.into_iter() {
+                    if remaining == 0 {
+                        break;
+                    }
+                    let span_len = span.content.chars().count();
+                    if span_len <= remaining {
+                        remaining = remaining.saturating_sub(span_len);
+                        out_spans.push(span);
+                    } else {
+                        let clipped: String = span.content.chars().take(remaining).collect();
+                        out_spans.push(ratatui::text::Span::styled(clipped, span.style));
+                        remaining = 0;
+                        break;
                     }
                 }
 
-                ListItem::new(content).style(style)
+                if truncated {
+                    out_spans.push(ratatui::text::Span::styled("…".to_string(), base_style));
+                }
+
+                ListItem::new(ratatui::text::Line::from(out_spans))
             })
             .collect();
 
