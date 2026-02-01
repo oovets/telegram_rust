@@ -1724,59 +1724,54 @@ impl App {
                         .map(|(i, _)| i)
                         .collect();
 
-                    if !matching_panes.is_empty() {
-                        // For outgoing messages, don't reload immediately - they're already shown optimistically
-                        // Only reload for incoming messages
-                        if !is_outgoing {
-                            // Reload messages for matching panes
-                            let target_id = if self
-                                .panes
-                                .iter()
-                                .any(|p| p.chat_id == Some(chat_id))
-                            {
-                                chat_id
-                            } else {
-                                normalized_id
-                            };
+                if !matching_panes.is_empty() {
+                    // Always reload messages to get the real message ID and full data from Telegram
+                    // This replaces the optimistic local echo (msg_id: 0) with the real message
+                    let target_id = if self
+                        .panes
+                        .iter()
+                        .any(|p| p.chat_id == Some(chat_id))
+                    {
+                        chat_id
+                    } else {
+                        normalized_id
+                    };
 
-                            if let Ok(raw_messages) =
-                                self.telegram.get_messages(target_id, 50).await
-                            {
-                                // Convert to MessageData for proper formatting support
-                                let msg_data: Vec<crate::widgets::MessageData> = raw_messages
-                                    .iter()
-                                    .map(|(msg_id, sender_id, sender_name, text, reply_to_id, media_type, reactions)| {
-                                        let reply_to_msg_id = *reply_to_id;
-                                        
-                                        crate::widgets::MessageData {
-                                            msg_id: *msg_id,
-                                            sender_id: *sender_id,
-                                            sender_name: sender_name.clone(),
-                                            text: text.clone(),
-                                            is_outgoing: *sender_id == self.my_user_id,
-                                            timestamp: chrono::Utc::now().timestamp(),
-                                            media_type: media_type.clone(),
-                                            media_label: None,
-                                            reactions: reactions.clone(),
-                                            reply_to_msg_id,
-                                            reply_sender: None,
-                                            reply_text: None,
-                                        }
-                                    })
-                                    .collect();
-
-                                for idx in &matching_panes {
-                                    if let Some(pane) = self.panes.get_mut(*idx) {
-                                        pane.msg_data = msg_data.clone();
-                                        pane.format_cache.clear(); // Clear cache so messages are re-rendered
-                                        // Don't clear messages - they may contain status messages
-                                    }
+                    if let Ok(raw_messages) =
+                        self.telegram.get_messages(target_id, 50).await
+                    {
+                        // Convert to MessageData for proper formatting support
+                        let msg_data: Vec<crate::widgets::MessageData> = raw_messages
+                            .iter()
+                            .map(|(msg_id, sender_id, sender_name, text, reply_to_id, media_type, reactions)| {
+                                let reply_to_msg_id = *reply_to_id;
+                                
+                                crate::widgets::MessageData {
+                                    msg_id: *msg_id,
+                                    sender_id: *sender_id,
+                                    sender_name: sender_name.clone(),
+                                    text: text.clone(),
+                                    is_outgoing: *sender_id == self.my_user_id,
+                                    timestamp: chrono::Utc::now().timestamp(),
+                                    media_type: media_type.clone(),
+                                    media_label: None,
+                                    reactions: reactions.clone(),
+                                    reply_to_msg_id,
+                                    reply_sender: None,
+                                    reply_text: None,
                                 }
+                            })
+                            .collect();
+
+                        for idx in &matching_panes {
+                            if let Some(pane) = self.panes.get_mut(*idx) {
+                                pane.msg_data = msg_data.clone();
+                                pane.format_cache.clear(); // Clear cache so messages are re-rendered
+                                // Don't clear messages - they may contain status messages
                             }
                         }
-                        // For outgoing messages, the optimistic message is already shown
-                        // It will be updated naturally when we refresh later
-                    } else {
+                    }
+                } else {
                         // Increment unread for chats not in view
                         if let Some(chat_info) = self
                             .chats
