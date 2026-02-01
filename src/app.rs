@@ -1047,12 +1047,14 @@ impl App {
             // Going from chat list to first pane
             self.focus_on_chat_list = false;
             self.focused_pane_idx = all_panes[0];
+            self.mark_pane_chat_read(self.focused_pane_idx);
         } else {
             // Find current pane position
             if let Some(current_pos) = all_panes.iter().position(|&idx| idx == self.focused_pane_idx) {
                 if current_pos + 1 < all_panes.len() {
                     // Go to next pane
                     self.focused_pane_idx = all_panes[current_pos + 1];
+                    self.mark_pane_chat_read(self.focused_pane_idx);
                 } else {
                     // Last pane, go back to chat list
                     self.focus_on_chat_list = true;
@@ -1060,6 +1062,7 @@ impl App {
             } else {
                 // Current pane not found, reset to first
                 self.focused_pane_idx = all_panes[0];
+                self.mark_pane_chat_read(self.focused_pane_idx);
             }
         }
     }
@@ -1074,10 +1077,12 @@ impl App {
             // Go to last pane
             self.focus_on_chat_list = false;
             self.focused_pane_idx = *all_panes.last().unwrap();
+            self.mark_pane_chat_read(self.focused_pane_idx);
         } else {
             if let Some(current_pos) = all_panes.iter().position(|&idx| idx == self.focused_pane_idx) {
                 if current_pos > 0 {
                     self.focused_pane_idx = all_panes[current_pos - 1];
+                    self.mark_pane_chat_read(self.focused_pane_idx);
                 } else {
                     self.focus_on_chat_list = true;
                 }
@@ -1094,6 +1099,7 @@ impl App {
             let next = (current_pos + 1) % all_panes.len();
             self.focused_pane_idx = all_panes[next];
             self.focus_on_chat_list = false;
+            self.mark_pane_chat_read(self.focused_pane_idx);
         }
     }
 
@@ -1106,6 +1112,7 @@ impl App {
             let prev = if current_pos > 0 { current_pos - 1 } else { all_panes.len() - 1 };
             self.focused_pane_idx = all_panes[prev];
             self.focus_on_chat_list = false;
+            self.mark_pane_chat_read(self.focused_pane_idx);
         }
     }
 
@@ -1175,6 +1182,21 @@ impl App {
         self.notify(&format!("Borders: {}", if self.show_borders { "ON" } else { "OFF" }));
     }
 
+    fn mark_pane_chat_read(&mut self, pane_idx: usize) {
+        let chat_id = match self.panes.get(pane_idx).and_then(|p| p.chat_id) {
+            Some(chat_id) => chat_id,
+            None => return,
+        };
+
+        if let Some(chat_info) = self.chats.iter_mut().find(|c| c.id == chat_id) {
+            chat_info.unread = 0;
+        }
+
+        if let Some(pane) = self.panes.get_mut(pane_idx) {
+            pane.unread_count_at_load = 0;
+        }
+    }
+
 
     /// Handle mouse click to select pane or open chat
     pub fn handle_mouse_click(&mut self, x: u16, y: u16) {
@@ -1184,6 +1206,7 @@ impl App {
                 // Clicked on this pane - make it active
                 self.focused_pane_idx = pane_idx;
                 self.focus_on_chat_list = false;
+                self.mark_pane_chat_read(self.focused_pane_idx);
                 return;
             }
         }
