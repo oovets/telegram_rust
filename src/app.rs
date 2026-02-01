@@ -376,78 +376,97 @@ impl App {
             .and_then(|p| p.chat_id);
         
         let max_width = area.width.saturating_sub(6).max(1) as usize;
-        let items: Vec<ListItem> = self
-            .chats
-            .iter()
-            .enumerate()
-            .map(|(_idx, chat)| {
-                // Highlight if this chat is open in the focused pane
-                let base_style = if Some(chat.id) == active_chat_id {
-                    Style::default()
-                        .fg(Color::Yellow)
-                        .add_modifier(Modifier::BOLD)
+        let (unread_group, active_group, other_group) = self.chat_list_groups();
+
+        let build_item = |chat: &ChatInfo| -> ListItem {
+            // Highlight if this chat is open in the focused pane
+            let base_style = if Some(chat.id) == active_chat_id {
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default()
+            };
+
+            let unread_marker = if chat.unread > 0 { "▶ " } else { "" };
+            let unread_count = if chat.unread > 0 {
+                format!("({}) ", chat.unread)
+            } else {
+                String::new()
+            };
+
+            let mut name_part = chat.name.clone();
+            if let Some(ref username) = chat.username {
+                if !username.is_empty() {
+                    name_part.push_str(&format!(" {}", username));
+                }
+            }
+
+            let mut spans = Vec::new();
+            if !unread_marker.is_empty() {
+                spans.push(ratatui::text::Span::styled(
+                    unread_marker.to_string(),
+                    Style::default().fg(Color::Red),
+                ));
+            }
+            if !unread_count.is_empty() {
+                spans.push(ratatui::text::Span::styled(unread_count, base_style));
+            }
+            spans.push(ratatui::text::Span::styled(name_part, base_style));
+
+            // Truncate spans to fit
+            let total_chars: usize = spans.iter().map(|s| s.content.chars().count()).sum();
+            let truncated = total_chars > max_width && max_width > 0;
+            let mut remaining = if truncated { max_width.saturating_sub(1) } else { max_width };
+            let mut out_spans: Vec<ratatui::text::Span> = Vec::new();
+
+            for span in spans.into_iter() {
+                if remaining == 0 {
+                    break;
+                }
+                let span_len = span.content.chars().count();
+                if span_len <= remaining {
+                    remaining = remaining.saturating_sub(span_len);
+                    out_spans.push(span);
                 } else {
-                    Style::default()
-                };
-
-                let unread_marker = if chat.unread > 0 { "▶ " } else { "" };
-                let unread_count = if chat.unread > 0 {
-                    format!("({}) ", chat.unread)
-                } else {
-                    String::new()
-                };
-
-                let mut name_part = chat.name.clone();
-                if let Some(ref username) = chat.username {
-                    if !username.is_empty() {
-                        name_part.push_str(&format!(" {}", username));
-                    }
+                    let clipped: String = span.content.chars().take(remaining).collect();
+                    out_spans.push(ratatui::text::Span::styled(clipped, span.style));
+                    break;
                 }
+            }
 
-                let mut spans = Vec::new();
-                if !unread_marker.is_empty() {
-                    spans.push(ratatui::text::Span::styled(
-                        unread_marker.to_string(),
-                        Style::default().fg(Color::Red),
-                    ));
-                }
-                if !unread_count.is_empty() {
-                    spans.push(ratatui::text::Span::styled(
-                        unread_count,
-                        base_style,
-                    ));
-                }
-                spans.push(ratatui::text::Span::styled(name_part, base_style));
+            if truncated {
+                out_spans.push(ratatui::text::Span::styled("…".to_string(), base_style));
+            }
 
-                // Truncate spans to fit
-                let total_chars: usize = spans.iter().map(|s| s.content.chars().count()).sum();
-                let truncated = total_chars > max_width && max_width > 0;
-                let mut remaining = if truncated { max_width.saturating_sub(1) } else { max_width };
-                let mut out_spans: Vec<ratatui::text::Span> = Vec::new();
+            ListItem::new(ratatui::text::Line::from(out_spans))
+        };
 
-                for span in spans.into_iter() {
-                    if remaining == 0 {
-                        break;
-                    }
-                    let span_len = span.content.chars().count();
-                    if span_len <= remaining {
-                        remaining = remaining.saturating_sub(span_len);
-                        out_spans.push(span);
-                    } else {
-                        let clipped: String = span.content.chars().take(remaining).collect();
-                        out_spans.push(ratatui::text::Span::styled(clipped, span.style));
-                        remaining = 0;
-                        break;
-                    }
-                }
+        let header_style = Style::default()
+            .fg(Color::DarkGray)
+            .add_modifier(Modifier::BOLD);
+        let mut items: Vec<ListItem> = Vec::new();
 
-                if truncated {
-                    out_spans.push(ratatui::text::Span::styled("…".to_string(), base_style));
-                }
+        if !unread_group.is_empty() {
+            items.push(ListItem::new("Unread").style(header_style));
+            for chat_idx in unread_group.iter() {
+                items.push(build_item(&self.chats[*chat_idx]));
+            }
+        }
 
-                ListItem::new(ratatui::text::Line::from(out_spans))
-            })
-            .collect();
+        if !active_group.is_empty() {
+            items.push(ListItem::new("Active").style(header_style));
+            for chat_idx in active_group.iter() {
+                items.push(build_item(&self.chats[*chat_idx]));
+            }
+        }
+
+        if !other_group.is_empty() {
+            items.push(ListItem::new("Other").style(header_style));
+            for chat_idx in other_group.iter() {
+                items.push(build_item(&self.chats[*chat_idx]));
+            }
+        }
 
         let border_style = if self.focus_on_chat_list {
             Style::default().fg(Color::Green)
@@ -1182,6 +1201,40 @@ impl App {
         self.notify(&format!("Borders: {}", if self.show_borders { "ON" } else { "OFF" }));
     }
 
+    fn chat_list_groups(&self) -> (Vec<usize>, Vec<usize>, Vec<usize>) {
+        let mut open_chat_ids = std::collections::HashSet::new();
+        for pane in &self.panes {
+            if let Some(chat_id) = pane.chat_id {
+                open_chat_ids.insert(chat_id);
+            }
+        }
+
+        let mut unread = Vec::new();
+        let mut active = Vec::new();
+        let mut other = Vec::new();
+
+        for (idx, chat) in self.chats.iter().enumerate() {
+            if open_chat_ids.contains(&chat.id) {
+                active.push(idx);
+            } else if chat.unread > 0 {
+                unread.push(idx);
+            } else {
+                other.push(idx);
+            }
+        }
+
+        (unread, active, other)
+    }
+
+    fn chat_list_order(&self) -> Vec<usize> {
+        let (unread, active, other) = self.chat_list_groups();
+        let mut ordered = Vec::with_capacity(self.chats.len());
+        ordered.extend(unread);
+        ordered.extend(active);
+        ordered.extend(other);
+        ordered
+    }
+
     fn mark_pane_chat_read(&mut self, pane_idx: usize) {
         let chat_id = match self.panes.get(pane_idx).and_then(|p| p.chat_id) {
             Some(chat_id) => chat_id,
@@ -1222,9 +1275,37 @@ impl App {
         }
         
         let relative_y = (y - list_area.y - border_offset) as usize;
-        if relative_y < self.chats.len() {
+        let ordered_chats = self.chat_list_order();
+        let (unread_group, active_group, other_group) = self.chat_list_groups();
+
+        let mut row_map: Vec<Option<usize>> = Vec::new();
+        let mut ordered_idx = 0usize;
+        if !unread_group.is_empty() {
+            row_map.push(None);
+            for _ in unread_group.iter() {
+                row_map.push(Some(ordered_idx));
+                ordered_idx += 1;
+            }
+        }
+        if !active_group.is_empty() {
+            row_map.push(None);
+            for _ in active_group.iter() {
+                row_map.push(Some(ordered_idx));
+                ordered_idx += 1;
+            }
+        }
+        if !other_group.is_empty() {
+            row_map.push(None);
+            for _ in other_group.iter() {
+                row_map.push(Some(ordered_idx));
+                ordered_idx += 1;
+            }
+        }
+
+        if relative_y < row_map.len() {
             // Open this chat in the focused pane
-            if let Some(chat) = self.chats.get(relative_y) {
+            if let Some(chat_idx) = row_map[relative_y].and_then(|idx| ordered_chats.get(idx).copied()) {
+                let chat = &self.chats[chat_idx];
                 let chat_id = chat.id;
                 let chat_name = chat.name.clone();
                 let chat_username = chat.username.clone();
@@ -1266,6 +1347,9 @@ impl App {
                         chat_info.unread = 0;
                     }
                 }
+                if let Some(list_idx) = row_map[relative_y] {
+                    self.selected_chat_idx = list_idx;
+                }
             }
         }
         Ok(())
@@ -1285,7 +1369,10 @@ impl App {
 
     pub fn handle_up(&mut self) {
         if self.focus_on_chat_list {
-            if self.selected_chat_idx > 0 {
+            let max_idx = self.chat_list_order().len().saturating_sub(1);
+            if self.selected_chat_idx > max_idx {
+                self.selected_chat_idx = max_idx;
+            } else if self.selected_chat_idx > 0 {
                 self.selected_chat_idx -= 1;
             }
         } else {
@@ -1314,7 +1401,8 @@ impl App {
 
     pub fn handle_down(&mut self) {
         if self.focus_on_chat_list {
-            if self.selected_chat_idx < self.chats.len().saturating_sub(1) {
+            let max_idx = self.chat_list_order().len().saturating_sub(1);
+            if self.selected_chat_idx < max_idx {
                 self.selected_chat_idx += 1;
             }
         } else {
@@ -1382,7 +1470,9 @@ impl App {
         
         if input_empty {
             if self.focus_on_chat_list && !self.chats.is_empty() {
-                if let Some(chat) = self.chats.get(self.selected_chat_idx) {
+                let ordered_chats = self.chat_list_order();
+                if let Some(&chat_idx) = ordered_chats.get(self.selected_chat_idx) {
+                    let chat = &self.chats[chat_idx];
                     let chat_id = chat.id;
                     let chat_name = chat.name.clone();
                     let chat_username = chat.username.clone();
