@@ -576,154 +576,187 @@ impl App {
             pane.messages.clone()
         };
 
+        let wrap_plain_text = |text: &str, max_width: usize| -> Vec<String> {
+            if max_width == 0 || text.len() <= max_width {
+                return vec![text.to_string()];
+            }
+
+            let mut lines = Vec::new();
+            let mut current_line = String::new();
+
+            for word in text.split_whitespace() {
+                if current_line.len() + word.len() + 1 > max_width {
+                    if !current_line.is_empty() {
+                        lines.push(current_line.clone());
+                        current_line.clear();
+                    }
+                    if word.chars().count() > max_width {
+                        let split_at = word
+                            .char_indices()
+                            .nth(max_width)
+                            .map(|(i, _)| i)
+                            .unwrap_or(word.len());
+                        lines.push(word[..split_at].to_string());
+                        current_line = word[split_at..].to_string();
+                    } else {
+                        current_line = word.to_string();
+                    }
+                } else {
+                    if !current_line.is_empty() {
+                        current_line.push(' ');
+                    }
+                    current_line.push_str(word);
+                }
+            }
+            if !current_line.is_empty() {
+                lines.push(current_line);
+            }
+            lines
+        };
+
+        let wrap_message_with_indent =
+            |prefix: &str, sender_name: &str, message_text: &str, max_width: usize| -> Vec<String> {
+                let header = format!("{}{}: ", prefix, sender_name);
+                let indent_len = header.chars().count();
+
+                if max_width == 0 {
+                    return vec![format!("{}{}", header, message_text)];
+                }
+
+                if indent_len >= max_width {
+                    return wrap_plain_text(&format!("{}{}", header, message_text), max_width);
+                }
+
+                let first_width = max_width.saturating_sub(indent_len);
+                let wrapped = wrap_plain_text(message_text, first_width);
+                if wrapped.is_empty() {
+                    return vec![header.trim_end().to_string()];
+                }
+
+                let indent = " ".repeat(indent_len);
+                let mut lines = Vec::with_capacity(wrapped.len());
+                lines.push(format!("{}{}", header, wrapped[0]));
+                for line in wrapped.iter().skip(1) {
+                    lines.push(format!("{}{}", indent, line));
+                }
+                lines
+            };
+
+        let style_name_in_line = |line: &str, sender_name: &str, name_style: Style| -> Line {
+            if sender_name.is_empty() {
+                return Line::from(line.to_string());
+            }
+
+            let name_token = format!("{}:", sender_name);
+            if let Some(start) = line.find(&name_token) {
+                let name_end = start + sender_name.len();
+                let before = &line[..start];
+                let name = &line[start..name_end];
+                let after = &line[name_end..];
+                Line::from(vec![
+                    ratatui::text::Span::raw(before.to_string()),
+                    ratatui::text::Span::styled(name.to_string(), name_style),
+                    ratatui::text::Span::raw(after.to_string()),
+                ])
+            } else {
+                Line::from(line.to_string())
+            }
+        };
+
         let message_lines: Vec<Line> = display_lines
             .iter()
             .flat_map(|msg| {
                 if msg.is_empty() {
                     return vec![Line::from("")];
                 }
-                
-                let (display_msg, style) = if msg.starts_with("[REPLY_TO_ME]") {
+
+                if msg.starts_with("[REPLY_TO_ME]") {
                     let clean_msg = msg.replace("[REPLY_TO_ME]", "").trim_start().to_string();
-                    (clean_msg, Style::default().fg(Color::Red).add_modifier(Modifier::ITALIC))
-                } else if msg.starts_with("  ↳ Reply to") {
-                    (msg.to_string(), Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC))
-                } else if msg.contains("[OUT]:") {
-                    if let Some(marker_pos) = msg.find("[OUT]:") {
+                    return wrap_plain_text(&clean_msg, message_width)
+                        .into_iter()
+                        .map(|line| {
+                            Line::from(line).style(
+                                Style::default()
+                                    .fg(Color::Red)
+                                    .add_modifier(Modifier::ITALIC),
+                            )
+                        })
+                        .collect();
+                }
+
+                if msg.starts_with("  ↳ Reply to") {
+                    return wrap_plain_text(msg, message_width)
+                        .into_iter()
+                        .map(|line| {
+                            Line::from(line).style(
+                                Style::default()
+                                    .fg(Color::DarkGray)
+                                    .add_modifier(Modifier::ITALIC),
+                            )
+                        })
+                        .collect();
+                }
+
+                if msg.contains("[OUT]:") || msg.contains("[IN]:") {
+                    let is_outgoing = msg.contains("[OUT]:");
+                    let marker = if is_outgoing { "[OUT]:" } else { "[IN]:" };
+                    let marker_len = marker.len();
+                    if let Some(marker_pos) = msg.find(marker) {
                         let prefix = &msg[..marker_pos];
-                        let after_marker = &msg[marker_pos + 6..];
-                        
+                        let after_marker = &msg[marker_pos + marker_len..];
+
                         if let Some(first_colon) = after_marker.find(':') {
                             let sender_id_str = &after_marker[..first_colon];
                             let after_id = &after_marker[first_colon + 1..];
                             if let Some(second_colon) = after_id.find(':') {
                                 let sender_name = &after_id[..second_colon];
                                 let message_text = &after_id[second_colon + 1..];
-                                
+
                                 if let Ok(sender_id) = sender_id_str.parse::<i64>() {
-                                    let color = if is_group_chat {
-                                        self.user_colors.get(&sender_id).copied().unwrap_or(Color::Green)
-                                    } else {
+                                    let base_color = if is_outgoing {
                                         Color::Green
-                                    };
-                                    let clean_msg = format!("{}{}: {}", prefix, sender_name, message_text);
-                                    (clean_msg, Style::default().fg(color))
-                                } else {
-                                    // Fallback if parsing fails
-                                    let parts: Vec<&str> = after_marker.splitn(3, ':').collect();
-                                    let clean_msg = if parts.len() >= 3 {
-                                        format!("{}{}:{}", prefix, parts[1], parts[2])
-                                    } else {
-                                        format!("{}{}", prefix, after_marker)
-                                    };
-                                    (clean_msg, Style::default().fg(Color::Green))
-                                }
-                            } else {
-                                let parts: Vec<&str> = after_marker.splitn(3, ':').collect();
-                                let clean_msg = if parts.len() >= 3 {
-                                    format!("{}{}:{}", prefix, parts[1], parts[2])
-                                } else if parts.len() == 2 {
-                                    format!("{}{}:{}", prefix, parts[0], parts[1])
-                                } else {
-                                    format!("{}{}", prefix, after_marker)
-                                };
-                                (clean_msg, Style::default().fg(Color::Green))
-                            }
-                        } else {
-                            (format!("{}{}", prefix, after_marker), Style::default().fg(Color::Green))
-                        }
-                    } else {
-                        (msg.to_string(), Style::default().fg(Color::Green))
-                    }
-                } else if msg.contains("[IN]:") {
-                    if let Some(marker_pos) = msg.find("[IN]:") {
-                        let prefix = &msg[..marker_pos];
-                        let after_marker = &msg[marker_pos + 5..];
-                        
-                        if let Some(first_colon) = after_marker.find(':') {
-                            let sender_id_str = &after_marker[..first_colon];
-                            let after_id = &after_marker[first_colon + 1..];
-                            if let Some(second_colon) = after_id.find(':') {
-                                let sender_name = &after_id[..second_colon];
-                                let message_text = &after_id[second_colon + 1..];
-                                
-                                if let Ok(sender_id) = sender_id_str.parse::<i64>() {
-                                    let color = if is_group_chat {
-                                        self.user_colors.get(&sender_id).copied().unwrap_or(Color::Cyan)
                                     } else {
                                         Color::Cyan
                                     };
-                                    let clean_msg = format!("{}{}: {}", prefix, sender_name, message_text);
-                                    (clean_msg, Style::default().fg(color))
-                                } else {
-                                    // Fallback if parsing fails
-                                    let parts: Vec<&str> = after_marker.splitn(3, ':').collect();
-                                    let clean_msg = if parts.len() >= 3 {
-                                        format!("{}{}:{}", prefix, parts[1], parts[2])
+                                    let color = if is_group_chat {
+                                        self.user_colors.get(&sender_id).copied().unwrap_or(base_color)
                                     } else {
-                                        format!("{}{}", prefix, after_marker)
+                                        base_color
                                     };
-                                    (clean_msg, Style::default().fg(Color::Cyan))
+                                    let lines = wrap_message_with_indent(
+                                        prefix,
+                                        sender_name,
+                                        message_text,
+                                        message_width,
+                                    );
+                                    if self.show_user_colors {
+                                        return lines
+                                            .into_iter()
+                                            .enumerate()
+                                            .map(|(idx, line)| {
+                                                if idx == 0 {
+                                                    style_name_in_line(
+                                                        &line,
+                                                        sender_name,
+                                                        Style::default().fg(color),
+                                                    )
+                                                } else {
+                                                    Line::from(line)
+                                                }
+                                            })
+                                            .collect();
+                                    }
+                                    return lines.into_iter().map(Line::from).collect();
                                 }
-                            } else {
-                                // Fallback if format is wrong
-                                let parts: Vec<&str> = after_marker.splitn(3, ':').collect();
-                                let clean_msg = if parts.len() >= 3 {
-                                    format!("{}{}:{}", prefix, parts[1], parts[2])
-                                } else if parts.len() == 2 {
-                                    format!("{}{}:{}", prefix, parts[0], parts[1])
-                                } else {
-                                    format!("{}{}", prefix, after_marker)
-                                };
-                                (clean_msg, Style::default().fg(Color::Cyan))
                             }
-                        } else {
-                            // Fallback if format is wrong
-                            (format!("{}{}", prefix, after_marker), Style::default().fg(Color::Cyan))
-                        }
-                    } else {
-                        (msg.to_string(), Style::default().fg(Color::Cyan))
-                    }
-                } else {
-                    (msg.to_string(), Style::default())
-                };
-                
-                let max_width = message_width;
-                if display_msg.len() > max_width && max_width > 0 {
-                    let mut lines = Vec::new();
-                    let mut current_line = String::new();
-
-                    for word in display_msg.split_whitespace() {
-                        if current_line.len() + word.len() + 1 > max_width {
-                            if !current_line.is_empty() {
-                                lines.push(Line::from(current_line.clone()).style(style));
-                                current_line.clear();
-                            }
-                            if word.chars().count() > max_width {
-                                let split_at = word
-                                    .char_indices()
-                                    .nth(max_width)
-                                    .map(|(i, _)| i)
-                                    .unwrap_or(word.len());
-                                lines.push(Line::from(word[..split_at].to_string()).style(style));
-                                current_line = word[split_at..].to_string();
-                            } else {
-                                current_line = word.to_string();
-                            }
-                        } else {
-                            if !current_line.is_empty() {
-                                current_line.push(' ');
-                            }
-                            current_line.push_str(word);
                         }
                     }
-                    if !current_line.is_empty() {
-                        lines.push(Line::from(current_line).style(style));
-                    }
-                    lines
-                } else {
-                    vec![Line::from(display_msg).style(style)]
                 }
+
+                wrap_plain_text(msg, message_width)
+                    .into_iter()
+                    .map(Line::from)
+                    .collect()
             })
             .collect();
 

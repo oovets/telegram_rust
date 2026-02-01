@@ -145,33 +145,43 @@ async fn run_app<B: ratatui::backend::Backend>(
                     KeyCode::Char('y') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                         app.toggle_borders();
                     }
-                    // Esc: Cancel reply, or focus chat list
+                    // Esc: Cancel reply mode
                     KeyCode::Esc => {
                         if let Some(pane) = app.panes.get_mut(app.focused_pane_idx) {
                             if pane.reply_to_message.is_some() {
                                 pane.reply_to_message = None;
                                 pane.hide_reply_preview();
-                            } else {
-                                app.focus_on_chat_list = true;
                             }
                         }
                     }
-                    // Ctrl+Left/Right: Switch between panes
-                    KeyCode::Left if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                        app.focus_prev_pane();
-                    }
-                    KeyCode::Right if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                        app.focus_next_pane();
-                    }
-                    // Shift+Tab: Cycle focus backwards
+                    // Shift+Tab: Cycle focus backwards (only if input empty)
                     KeyCode::BackTab => {
-                        app.cycle_focus_reverse();
+                        let input_empty = app
+                            .panes
+                            .get(app.focused_pane_idx)
+                            .map_or(true, |p| p.input_buffer.is_empty());
+                        if app.focus_on_chat_list || input_empty {
+                            app.cycle_focus_reverse();
+                        }
                     }
                     // Tab: Autocomplete or cycle focus
                     KeyCode::Tab => {
                         app.handle_tab();
                     }
+                    // Alt+Left/Right: Focus previous/next pane
+                    KeyCode::Left if key.modifiers.contains(KeyModifiers::ALT) => {
+                        app.focus_prev_pane();
+                    }
+                    KeyCode::Right if key.modifiers.contains(KeyModifiers::ALT) => {
+                        app.focus_next_pane();
+                    }
                     // Arrow keys
+                    KeyCode::Up => {
+                        app.handle_up();
+                    }
+                    KeyCode::Down => {
+                        app.handle_down();
+                    }
                     KeyCode::Left => {
                         if !app.focus_on_chat_list {
                             app.handle_input_left();
@@ -182,6 +192,7 @@ async fn run_app<B: ratatui::backend::Backend>(
                             app.handle_input_right();
                         }
                     }
+                    // Home/End: Move cursor to start/end
                     KeyCode::Home => {
                         if !app.focus_on_chat_list {
                             app.handle_home();
@@ -192,29 +203,12 @@ async fn run_app<B: ratatui::backend::Backend>(
                             app.handle_end();
                         }
                     }
-                    KeyCode::Delete => {
-                        if !app.focus_on_chat_list {
-                            app.handle_delete();
-                        }
-                    }
-                    KeyCode::Up => {
-                        app.handle_up();
-                    }
-                    KeyCode::Down => {
-                        app.handle_down();
-                    }
                     // PageUp/PageDown: Scroll messages
                     KeyCode::PageUp => {
                         app.handle_page_up();
                     }
                     KeyCode::PageDown => {
                         app.handle_page_down();
-                    }
-                    // Alt+Enter: Insert newline
-                    KeyCode::Enter if key.modifiers.contains(KeyModifiers::ALT) => {
-                        if !app.focus_on_chat_list {
-                            app.handle_char('\n');
-                        }
                     }
                     // Enter: Submit
                     KeyCode::Enter => {
@@ -230,6 +224,12 @@ async fn run_app<B: ratatui::backend::Backend>(
                     KeyCode::Backspace => {
                         if !app.focus_on_chat_list {
                             app.handle_backspace();
+                        }
+                    }
+                    // Delete
+                    KeyCode::Delete => {
+                        if !app.focus_on_chat_list {
+                            app.handle_delete();
                         }
                     }
                     _ => {}
