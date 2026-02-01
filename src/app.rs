@@ -291,7 +291,7 @@ impl App {
         let (chat_area, pane_area) = if self.show_chat_list {
             let total_width = outer[0].width;
             let base_chat_width = total_width.saturating_mul(20) / 100;
-            let chat_width = base_chat_width.saturating_sub(10).max(10);
+            let chat_width = base_chat_width.saturating_sub(5).max(10);
             let chunks = Layout::default()
                 .direction(Direction::Horizontal)
                 .constraints([Constraint::Length(chat_width), Constraint::Min(0)])
