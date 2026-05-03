@@ -17,46 +17,6 @@ pub fn _format_message_time(timestamp: i64) -> String {
     }
 }
 
-pub fn _log_message(message: &str, level: &str) {
-    use std::fs::OpenOptions;
-    use std::io::Write;
-
-    let log_file = "telegram_client.log";
-    let timestamp = Local::now().format("%Y-%m-%d %H:%M:%S");
-    let log_line = format!("[{}] {}: {}\n", timestamp, level, message);
-
-    if let Ok(mut file) = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(log_file)
-    {
-        let _ = file.write_all(log_line.as_bytes());
-    }
-}
-
-#[macro_export]
-macro_rules! log_error {
-    ($($arg:tt)*) => {
-        $crate::utils::_log_message(&format!($($arg)*), "ERROR")
-    };
-}
-
-#[macro_export]
-macro_rules! log_debug {
-    ($($arg:tt)*) => {
-        if cfg!(debug_assertions) {
-            $crate::utils::_log_message(&format!($($arg)*), "DEBUG")
-        }
-    };
-}
-
-#[macro_export]
-macro_rules! log_info {
-    ($($arg:tt)*) => {
-        $crate::utils::_log_message(&format!($($arg)*), "INFO")
-    };
-}
-
 #[cfg(test)]
 pub fn sanitize_chat_name(name: &str) -> String {
     name.replace('[', "\\[")

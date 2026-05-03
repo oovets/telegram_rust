@@ -1,157 +1,156 @@
 # Telegram Client - Rust TUI
 
-A fully functional Telegram client in the terminal, written in Rust for maximum performance and responsiveness.
+A fast, keyboard-first Telegram client built for terminal workflows.  
+Designed for people who live in panes, move quickly with shortcuts, and want multi-chat focus without leaving the shell.
 
-## Features
+## Why This Client
 
-### Complete Implementation
-- **Split View System**: Split screen vertically/horizontally into multiple panes
-- **Multi-Chat Support**: Open multiple chats simultaneously in different panes
-- **Click-to-Focus**: Click on panes to activate them, click on chats to open
-- **Reply System**: Reply to messages with full context and quoted text
-- **Message Formatting**: 
-  - Color-coded messages (green for outgoing, cyan for incoming)
-  - Red highlighting for replies to your own messages
-  - Emoji support and URL shortening
-  - Reaction display
-- **Display Toggles**:
-  - Ctrl+E: Reactions
-  - Ctrl+O: Emojis
-  - Ctrl+T: Timestamps
-  - Ctrl+G: Line numbers
-  - Ctrl+D: Compact mode
-  - Ctrl+S: Chat list (show/hide sidebar)
-  - Ctrl+Y: Toggle borders
-- **Pane Management**:
-  - Ctrl+V: Split vertically
-  - Ctrl+B: Split horizontally
-  - Ctrl+K: Toggle split direction (vertical ↔ horizontal)
-  - Ctrl+W: Close pane
-  - Ctrl+L: Clear pane
-  - Tab/Shift+Tab: Cycle focus between panes and chat list
-  - Ctrl+Left/Right: Switch directly between panes
-  - Alt+Enter: Multi-line input
-- **Commands**: /reply, /search, /media, /edit, /delete, /alias, /filter, /new, /newgroup, /add, /kick, /members, /forward
-- **Persistence**: Saves layout, settings and aliases between sessions
-- **Mouse Support**: Click to select panes and open chats
+- Fast redraws and responsive input in a native TUI
+- Multi-pane chat workflow (split, focus, close, clear)
+- Strong keyboard ergonomics + mouse support
+- Rich message formatting (replies, reactions, media labels, aliases)
+- Persistent layout/settings between sessions
+- Kitty inline image preview with zoom + next/previous navigation
 
-## Project Structure
+## Feature Highlights
 
-```
-telegram_client_rs/
-├── Cargo.toml           # Dependencies and project configuration
-├── src/
-│   ├── main.rs         # Entry point, event loop and mouse handling
-│   ├── app.rs          # Main application, UI logic and pane management
-│   ├── config.rs       # Configuration management
-│   ├── telegram.rs     # Telegram API integration (grammers-client)
-│   ├── widgets.rs      # ChatPane, MessageData structures
-│   ├── split_view.rs   # Split view tree structure and rendering
-│   ├── commands.rs     # Command parser and handlers
-│   ├── formatting.rs   # Message formatting, wrapping and URL handling
-│   ├── persistence.rs  # Layout, settings and alias persistence
-│   └── utils.rs        # Utility functions and desktop notifications
+- **Split view system**
+  - Vertical/horizontal pane split
+  - Per-pane focus and per-pane input buffers
+  - Pane direction toggle and pane close
+- **Chat organization**
+  - Sidebar sections: `Unread`, `Active`, `Other`, `Muted`
+  - Mute/unmute chats (muted chats grouped under `Other`)
+  - Unread marker and optional unread counts
+- **Message UX**
+  - Reply mode with inline preview
+  - Search, media fetch/open, forward, edit, delete
+  - Sender aliases
+  - Optional reactions, emojis, timestamps, line numbers, compact mode
+- **Inline media preview (Kitty)**
+  - `/media N` opens image preview inline in Kitty
+  - `Esc` close preview
+  - `+/-` zoom
+  - `n/p` or `Right/Left` next/previous image in the current chat
+- **Persistence**
+  - Saves pane tree/layout, focused pane, muted chats
+  - Saves display settings and aliases
+
+## TUI Layout (ASCII)
+
+```text
++-------------------- Chats --------------------+ +------------------ Pane 1 ------------------+ +-------- Preview --------+
+| Unread                                       | | Chat Header (name / username / typing)      | | Preview: image.png 120% |
+| ▶ (3) Team Alpha                             | |----------------------------------------------| |                        |
+| Active                                       | | #120 10:42 Alice: shipping now               | |      [ inline image ]  |
+| @bob                                         | | #121 10:43 You: ok                            | |                        |
+| Other                                        | |   ↳ Reply to Alice: looks good               | |                        |
+| Project Logs                                 | |                                              | |                        |
+| Muted                                        | |----------------------------------------------| |------------------------|
+| Release Bot                                  | | Input (Alt+Enter newline)                    | | Esc close, +/- zoom    |
++----------------------------------------------+ +----------------------------------------------+ +------------------------+
 ```
 
-## Dependencies
+## Keyboard Shortcuts
 
-- **ratatui** (0.29): Modern TUI framework
-- **crossterm**: Cross-platform terminal manipulation and mouse events
-- **tokio**: Async runtime
-- **grammers-client**: Telegram MTProto client
-- **grammers-session**: Session management
-- **serde + serde_json**: Serialization for config and persistence
-- **chrono**: Timestamp handling
-- **anyhow**: Ergonomic error handling
+### Global / Navigation
+- `Ctrl+Q`: Quit
+- `Ctrl+R`: Refresh chat list
+- `Tab` / `Shift+Tab`: Cycle focus
+- `Alt+Left/Right`: Focus previous/next pane
+- `Ctrl+Left/Right`: Resize sidebar width
+- `Up/Down`: Navigate chat list or input history
+- `Enter`: Open selected chat / send message
+- `Alt+Enter`: Insert newline in input
+- `Esc`: Cancel reply mode (or close inline preview)
 
-## Installation & Running
+### Pane Management
+- `Ctrl+V`: Split vertical
+- `Ctrl+B`: Split horizontal
+- `Ctrl+K`: Toggle split direction
+- `Ctrl+W`: Close active pane
+- `Ctrl+L`: Clear active pane
+- `PageUp/PageDown`: Scroll messages
+
+### Display & Chat Controls
+- `Ctrl+E`: Toggle reactions
+- `Ctrl+N`: Toggle desktop notifications
+- `Ctrl+D`: Toggle compact mode
+- `Ctrl+O`: Toggle emojis
+- `Ctrl+G`: Toggle line numbers
+- `Ctrl+T`: Toggle timestamps
+- `Ctrl+S`: Toggle chat list
+- `Ctrl+M`: Toggle unread count
+- `Ctrl+P`: Mute/unmute selected chat
+- `Ctrl+Y`: Toggle borders
+
+### Inline Preview (Kitty)
+- `Esc`: Close preview
+- `+` / `=`: Zoom in
+- `-`: Zoom out
+- `n` or `Right`: Next image
+- `p` or `Left`: Previous image
+
+## Commands
+
+- `/reply <N>` or `/r <N>`: Reply to message #N
+- `/search <query>` or `/s <query>`: Search current chat
+- `/media <N>` or `/m <N>`: Download/open media from message #N
+  - In Kitty: inline preview for images
+- `/edit <N> <text>` or `/e <N> <text>`: Edit message #N
+- `/delete <N>` or `/d <N>`: Delete message #N
+- `/alias <N> <name>`: Alias sender of message #N
+- `/unalias <N>`: Remove alias for sender of message #N
+- `/filter <type|sender>`: Filter by media/sender/link
+- `/filter off`: Disable filter
+- `/new @username`: Open DM by username
+- `/newgroup <name>`: Create group
+- `/add @username`: Add user to current group
+- `/kick @username` or `/remove @username`: Remove user
+- `/members`: List current group members
+- `/forward <N> @username` or `/fwd <N> @username`: Forward message
+
+## Install & Run
 
 ```bash
-# Clone repo
 cd telegram_client_rs
-
-# First time: requires Telegram API credentials
-# Add api_id and api_hash to telegram_config.json
-
-# Build
 cargo build --release
-
-# Run
 ./target/release/telegram_client_rs
 # or
 cargo run --release
 ```
 
-## Usage
+First run requires Telegram API credentials from `https://my.telegram.org`.
 
-### Navigation
-- **Up/Down**: Navigate in chat list or input history
-- **Tab**: Cycle between chat list -> Pane 1 -> Pane 2 -> ... -> back to chat list
-- **Shift+Tab**: Cycle focus backwards
-- **Ctrl+Left/Right**: Switch directly between panes
-- **Enter**: Open selected chat (in active pane) or send message
-- **Alt+Enter**: Insert newline in input box
-- **ESC**: Cancel reply mode, or return to chat list
+## Project Structure
 
-### Mouse
-- **Click on pane**: Activate that pane (green border) and focus input box
-- **Click on chat**: Open chat in active pane
+```text
+src/
+  main.rs          Event loop, key/mouse input handling
+  app.rs           Main UI + state + pane/chat behavior
+  commands.rs      Slash commands
+  telegram.rs      Telegram API integration
+  split_view.rs    Pane tree and rendering split logic
+  formatting.rs    Message formatting and wrapping
+  persistence.rs   Layout/settings/aliases persistence
+  kitty_preview.rs Kitty graphics protocol rendering
+  utils.rs         Notifications, autocomplete, helpers
+  widgets.rs       Chat/message data structures
+```
 
-### Pane Management
-- **Ctrl+V**: Split active pane vertically
-- **Ctrl+B**: Split active pane horizontally
-- **Ctrl+K**: Toggle split direction (switch between vertical and horizontal)
-- **Ctrl+W**: Close active pane
-- **Ctrl+L**: Clear active pane
-- **PageUp/PageDown**: Scroll messages
-- **Click on pane**: Activate pane and focus input box
+## Configuration Files
 
-### Display Settings
-- **Ctrl+E**: Toggle reactions
-- **Ctrl+N**: Toggle notifications
-- **Ctrl+D**: Toggle compact mode
-- **Ctrl+O**: Toggle emojis
-- **Ctrl+G**: Toggle line numbers
-- **Ctrl+T**: Toggle timestamps
-- **Ctrl+S**: Toggle chat list (sidebar)
-- **Ctrl+Y**: Toggle borders
+### `telegram_config.json`
 
-
-### Commands
-Type in the input field:
-- `/reply <N>` or `/r <N>`: Reply to message #N (set reply mode or inline reply with `/r N text`)
-- `/search <query>` or `/s <query>`: Search messages in active chat
-- `/media <N>` or `/m <N>`: Download and open media from message #N
-- `/edit <N> <text>` or `/e <N> <text>`: Edit message #N
-- `/delete <N>` or `/d <N>`: Delete message #N
-- `/alias <N> <name>`: Set display alias for sender of message #N
-- `/unalias <N>`: Remove alias for sender of message #N
-- `/filter <type>`: Filter messages (photo, video, audio, doc, link, sticker, or sender name)
-- `/filter off`: Disable filter
-- `/new @username`: Open a DM with a user by username
-- `/newgroup <name>`: Create a new group chat
-- `/add @username`: Add a user to the current group
-- `/kick @username` or `/remove @username`: Remove a user from the current group
-- `/members`: List members of the current group
-- `/forward <N> @username` or `/fwd <N> @username`: Forward message #N to a user/chat
-
-### Shortcuts
-- **Ctrl+Q**: Quit
-- **Ctrl+R**: Refresh chat list
-- **Ctrl+I**: Input focus toggle (legacy)
-
-## File Formats
-
-### telegram_config.json
 ```json
 {
   "api_id": 123456,
-  "api_hash": "your_hash_here",
-  "session_file": "telegram_session.session"
+  "api_hash": "your_hash_here"
 }
 ```
 
-### telegram_aliases.json
+### `telegram_aliases.json`
+
 ```json
 {
   "123456789": "Alice",
@@ -159,32 +158,16 @@ Type in the input field:
 }
 ```
 
-### telegram_layout.json
-Automatically saves split layout and pane configuration between sessions.
+### `telegram_layout.json`
 
-### Planned
-- Typing indicators
-- Online status
-- Message search pagination
+Saved automatically with pane layout, focused pane, and muted chat state.
 
 ## Development
 
 ```bash
-# Debug build with logging
 cargo build
-
-# Release build (optimized)
-cargo build --release
-
-# Run tests
 cargo test
-
-# Check code without building
 cargo check
-
-# Format code
 cargo fmt
-
-# Lint code
 cargo clippy
 ```

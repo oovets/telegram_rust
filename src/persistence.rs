@@ -12,6 +12,8 @@ pub struct LayoutData {
     pub focused_pane: usize,
     #[serde(default)]
     pub pane_tree: Option<PaneNode>,
+    #[serde(default)]
+    pub muted_chat_ids: Vec<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -37,6 +39,7 @@ impl LayoutData {
             }],
             focused_pane: 0,
             pane_tree: None,
+            muted_chat_ids: Vec::new(),
         }
     }
 
@@ -150,6 +153,12 @@ pub struct AppSettings {
 
     #[serde(default = "default_true")]
     pub show_chat_list: bool,
+
+    #[serde(default = "default_chat_list_width")]
+    pub chat_list_width: u16,
+
+    #[serde(default = "default_true")]
+    pub show_unread_count: bool,
 }
 
 impl Default for AppSettings {
@@ -164,12 +173,18 @@ impl Default for AppSettings {
             show_user_colors: true,
             show_borders: true,
             show_chat_list: true,
+            chat_list_width: default_chat_list_width(),
+            show_unread_count: true,
         }
     }
 }
 
 fn default_true() -> bool {
     true
+}
+
+fn default_chat_list_width() -> u16 {
+    30
 }
 
 impl AppState {
@@ -185,6 +200,8 @@ impl AppState {
                 show_user_colors: config.settings.show_user_colors,
                 show_borders: config.settings.show_borders,
                 show_chat_list: config.settings.show_chat_list,
+                chat_list_width: config.settings.chat_list_width,
+                show_unread_count: config.settings.show_unread_count,
             },
             aliases: Aliases::load(config)?,
             layout: LayoutData::load(config)?,

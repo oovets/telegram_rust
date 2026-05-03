@@ -44,6 +44,12 @@ pub struct Settings {
 
     #[serde(default = "default_true")]
     pub show_chat_list: bool,
+
+    #[serde(default = "default_chat_list_width")]
+    pub chat_list_width: u16,
+
+    #[serde(default = "default_true")]
+    pub show_unread_count: bool,
 }
 
 impl Default for Settings {
@@ -58,12 +64,18 @@ impl Default for Settings {
             show_user_colors: true,
             show_borders: true,
             show_chat_list: true,
+            chat_list_width: default_chat_list_width(),
+            show_unread_count: true,
         }
     }
 }
 
 fn default_true() -> bool {
     true
+}
+
+fn default_chat_list_width() -> u16 {
+    30
 }
 
 impl Config {

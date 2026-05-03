@@ -221,6 +221,7 @@ pub fn format_messages_for_display(
     filter_type: Option<&str>,
     filter_value: Option<&str>,
     unread_count: u32,
+    show_unread_count: bool,
     aliases: &HashMap<i64, String>,
 ) -> Vec<String> {
     let mut lines: Vec<String> = Vec::new();
@@ -242,7 +243,11 @@ pub fn format_messages_for_display(
         // Show unread marker
         if idx == unread_marker_idx && unread_count > 0 {
             let marker = "-".repeat(width / 2);
-            lines.push(format!("{} {} unread {}", marker, unread_count, marker));
+            if show_unread_count {
+                lines.push(format!("{} {} unread {}", marker, unread_count, marker));
+            } else {
+                lines.push(format!("{} unread {}", marker, marker));
+            }
         }
 
         let media_label = if let Some(ref media_type) = data.media_type {

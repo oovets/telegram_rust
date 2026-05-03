@@ -1,6 +1,7 @@
 use anyhow::Result;
 
 use crate::app::App;
+use crate::kitty_preview;
 use crate::widgets::FilterType;
 
 pub struct Command {
@@ -156,8 +157,6 @@ impl CommandHandler {
     }
 
     async fn handle_media(app: &mut App, cmd: &Command, pane_idx: usize) -> Result<()> {
-        crate::log_info!("handle_media: Command received with args: {:?}", cmd.args);
-        
         if cmd.args.is_empty() {
             app.notify("Usage: /media N or /m N");
             return Ok(());
@@ -171,29 +170,19 @@ impl CommandHandler {
             }
         };
 
-        crate::log_info!("handle_media: Parsed msg_num: {}", msg_num);
-
-        // Get the actual Telegram message ID from the pane's message data
         let (chat_id, telegram_msg_id) = if let Some(pane) = app.panes.get(pane_idx) {
             if let Some(chat_id) = pane.chat_id {
-                // msg_num is 1-indexed, msg_data is 0-indexed
                 if let Some(msg_data) = pane.msg_data.get((msg_num - 1) as usize) {
-                    crate::log_info!("handle_media: Found message in pane.msg_data - telegram msg_id: {}, text: '{}'", 
-                        msg_data.msg_id, msg_data.text);
                     (Some(chat_id), Some(msg_data.msg_id))
                 } else {
-                    crate::log_error!("handle_media: Message #{} not found in pane (have {} messages)", 
-                        msg_num, pane.msg_data.len());
                     app.notify(&format!("Message #{} not found", msg_num));
                     return Ok(());
                 }
             } else {
-                crate::log_error!("handle_media: No chat_id in pane");
                 app.notify("No chat selected");
                 return Ok(());
             }
         } else {
-            crate::log_error!("handle_media: Pane not found");
             app.notify("Pane not found");
             return Ok(());
         };
@@ -208,24 +197,69 @@ impl CommandHandler {
                 .await
             {
                 Ok(path) => {
-                    #[cfg(target_os = "macos")]
-                    {
-                        let _ = std::process::Command::new("open").arg(&path).spawn();
+                    let is_image = std::path::Path::new(&path)
+                        .extension()
+                        .and_then(|e| e.to_str())
+                        .map(|e| {
+                            matches!(
+                                e.to_ascii_lowercase().as_str(),
+                                "png" | "jpg" | "jpeg" | "webp" | "bmp" | "gif"
+                            )
+                        })
+                        .unwrap_or(false);
+
+                    if is_image && kitty_preview::supports_kitty_graphics() {
+                        let preview_path = if path.to_ascii_lowercase().ends_with(".png") {
+                            path.clone()
+                        } else {
+                            match image::open(&path) {
+                                Ok(img) => {
+                                    let png_path = std::env::temp_dir().join(format!(
+                                        "telegram_preview_{}_{}.png",
+                                        chat_id, telegram_msg_id
+                                    ));
+                                    if let Err(e) =
+                                        img.save_with_format(&png_path, image::ImageFormat::Png)
+                                    {
+                                        app.notify(&format!("Preview conversion failed: {}", e));
+                                        path.clone()
+                                    } else {
+                                        png_path.to_string_lossy().to_string()
+                                    }
+                                }
+                                Err(e) => {
+                                    app.notify(&format!("Preview decode failed: {}", e));
+                                    path.clone()
+                                }
+                            }
+                        };
+                        app.open_inline_preview_for_message(
+                            pane_idx,
+                            chat_id,
+                            telegram_msg_id,
+                            preview_path,
+                        );
+                        app.notify_with_duration("Inline preview opened (Esc to close)", 3);
+                    } else {
+                        #[cfg(target_os = "macos")]
+                        {
+                            let _ = std::process::Command::new("open").arg(&path).spawn();
+                        }
+                        #[cfg(target_os = "linux")]
+                        {
+                            let _ = std::process::Command::new("xdg-open").arg(&path).spawn();
+                        }
+                        app.notify_with_duration(
+                            &format!(
+                                "✓ {}",
+                                std::path::Path::new(&path)
+                                    .file_name()
+                                    .unwrap_or_default()
+                                    .to_string_lossy()
+                            ),
+                            3,
+                        );
                     }
-                    #[cfg(target_os = "linux")]
-                    {
-                        let _ = std::process::Command::new("xdg-open").arg(&path).spawn();
-                    }
-                    app.notify_with_duration(
-                        &format!(
-                            "✓ {}",
-                            std::path::Path::new(&path)
-                                .file_name()
-                                .unwrap_or_default()
-                                .to_string_lossy()
-                        ),
-                        3,
-                    );
                 }
                 Err(e) => {
                     app.notify(&format!("✗ {}", e));

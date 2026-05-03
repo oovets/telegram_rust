@@ -10,6 +10,7 @@ use ratatui::{
 use crate::commands::CommandHandler;
 use crate::config::Config;
 use crate::formatting::format_messages_for_display;
+use crate::kitty_preview;
 use crate::persistence::{Aliases, AppState, LayoutData, PaneState};
 use crate::split_view::{PaneNode, SplitDirection};
 use crate::telegram::TelegramClient;
@@ -19,7 +20,7 @@ use crate::widgets::ChatPane;
 pub struct App {
     pub config: Config,
     pub telegram: TelegramClient,
-    pub my_user_id: i64,  // Current user's ID for determining outgoing messages
+    pub my_user_id: i64,
     pub chats: Vec<ChatInfo>,
     pub selected_chat_idx: usize,
     pub panes: Vec<ChatPane>,
@@ -27,16 +28,15 @@ pub struct App {
     pub pane_tree: PaneNode,
     pub input_history: Vec<String>,
     pub history_idx: Option<usize>,
-    pub history_temp: String, // Save current input when browsing history
+    pub history_temp: String,
     pub aliases: Aliases,
     pub focus_on_chat_list: bool,
-    pub status_message: Option<String>, // Notification bar at bottom
+    pub status_message: Option<String>,
     pub status_expire: Option<std::time::Instant>,
-    pub pane_areas: std::collections::HashMap<usize, Rect>, // Track pane screen positions
-    pub chat_list_area: Option<Rect>, // Track chat list area for mouse clicks
+    pub pane_areas: std::collections::HashMap<usize, Rect>,
+    pub chat_list_area: Option<Rect>,
     pub needs_redraw: bool,
 
-    // Settings
     pub show_reactions: bool,
     pub show_notifications: bool,
     pub compact_mode: bool,
@@ -44,9 +44,21 @@ pub struct App {
     pub show_line_numbers: bool,
     pub show_timestamps: bool,
     pub show_chat_list: bool,
+    pub chat_list_width: u16,
+    pub show_unread_count: bool,
     pub show_user_colors: bool,
     pub show_borders: bool,
-    pub user_colors: std::collections::HashMap<i64, Color>, // Map sender_id to color for group chats
+    pub user_colors: std::collections::HashMap<i64, Color>,
+    pub muted_chat_ids: std::collections::HashSet<i64>,
+    pub inline_preview_path: Option<String>,
+    pub inline_preview_name: Option<String>,
+    pub inline_preview_rect: Option<(u16, u16, u16, u16)>,
+    pub inline_preview_dirty: bool,
+    pub inline_preview_last_sig: Option<String>,
+    pub inline_preview_zoom_pct: u16,
+    pub inline_preview_chat_id: Option<i64>,
+    pub inline_preview_image_msg_ids: Vec<i32>,
+    pub inline_preview_index: Option<usize>,
 }
 
 #[derive(Clone)]
@@ -70,15 +82,12 @@ impl App {
             layout: LayoutData::default(),
         });
 
-        // Load initial chats
         let chats = telegram.get_dialogs().await.unwrap_or_else(|_| Vec::new());
 
-        // Load pane tree first to know which panes we need
         let (pane_tree, required_indices) = if let Some(saved_tree) = app_state.layout.pane_tree {
             let indices = saved_tree.get_pane_indices();
             (saved_tree, indices)
         } else {
-            // No saved tree, create default based on number of saved panes
             let tree = if !app_state.layout.panes.is_empty() && app_state.layout.panes.len() > 1 {
                 let mut t = PaneNode::new_single(0);
                 for i in 1..app_state.layout.panes.len() {
@@ -92,20 +101,16 @@ impl App {
             (tree, indices)
         };
         
-        // Determine how many panes we need (max of what tree references and what's saved)
         let max_required_idx = required_indices.iter().max().copied().unwrap_or(0);
         let total_panes_needed = (max_required_idx + 1).max(app_state.layout.panes.len()).max(1);
         
-        // Load panes - create panes for all indices up to total_panes_needed
         let mut panes: Vec<ChatPane> = Vec::new();
         for i in 0..total_panes_needed {
             if let Some(ps) = app_state.layout.panes.get(i) {
-                // Load saved pane state
                 let mut pane = ChatPane::new();
                 pane.chat_id = ps.chat_id;
                 pane.chat_name = ps.chat_name.clone();
                 pane.scroll_offset = ps.scroll_offset;
-                // Load filter settings
                 if let Some(ref filter_type_str) = ps.filter_type {
                     pane.filter_type = Some(match filter_type_str.as_str() {
                         "sender" => crate::widgets::FilterType::Sender,
@@ -120,7 +125,6 @@ impl App {
                 pane.filter_value = ps.filter_value.clone();
                 panes.push(pane);
             } else {
-                // Create empty pane for missing index
                 panes.push(ChatPane::new());
             }
         }
@@ -157,19 +161,28 @@ impl App {
             show_line_numbers: app_state.settings.show_line_numbers,
             show_timestamps: app_state.settings.show_timestamps,
             show_chat_list: app_state.settings.show_chat_list,
+            chat_list_width: app_state.settings.chat_list_width.max(10),
+            show_unread_count: app_state.settings.show_unread_count,
             show_user_colors: app_state.settings.show_user_colors,
             show_borders: app_state.settings.show_borders,
             user_colors: std::collections::HashMap::new(),
+            muted_chat_ids: app_state.layout.muted_chat_ids.iter().copied().collect(),
+            inline_preview_path: None,
+            inline_preview_name: None,
+            inline_preview_rect: None,
+            inline_preview_dirty: false,
+            inline_preview_last_sig: None,
+            inline_preview_zoom_pct: 100,
+            inline_preview_chat_id: None,
+            inline_preview_image_msg_ids: Vec::new(),
+            inline_preview_index: None,
         };
 
-        // Load messages for all panes that have a saved chat_id
-        // This is what we had before - it works better
         app.load_saved_chat_messages().await?;
 
         Ok(app)
     }
 
-    /// Refresh messages for a specific pane
     async fn refresh_pane_messages(&mut self, pane_idx: usize) -> Result<()> {
         if let Some(pane) = self.panes.get(pane_idx) {
             if let Some(chat_id) = pane.chat_id {
@@ -200,12 +213,11 @@ impl App {
                             
                             if let Some(pane) = self.panes.get_mut(pane_idx) {
                                 pane.msg_data = msg_data;
-                                pane.format_cache.clear(); // Clear cache so messages are re-rendered
+                                pane.format_cache.clear();
                             }
                         }
                     }
                     Err(_) => {
-                        // Silently fail - messages will update via polling
                     }
                 }
             }
@@ -213,11 +225,9 @@ impl App {
         Ok(())
     }
 
-    /// Load messages for all panes that have a saved chat_id
     async fn load_saved_chat_messages(&mut self) -> Result<()> {
         for (_idx, pane) in self.panes.iter_mut().enumerate() {
             if let Some(chat_id) = pane.chat_id {
-                // Try to load messages for this chat
                 match self.telegram.get_messages(chat_id, 50).await {
                     Ok(raw_messages) => {
                         if !raw_messages.is_empty() {
@@ -244,16 +254,14 @@ impl App {
                                 .collect();
                             
                             pane.msg_data = msg_data;
-                            pane.format_cache.clear(); // Clear cache so messages are re-rendered
+                            pane.format_cache.clear();
                             
-                            // Also try to find username from chats list
                             if let Some(chat_info) = self.chats.iter().find(|c| c.id == chat_id) {
                                 pane.username = chat_info.username.clone();
                             }
                         }
                     }
                     Err(_) => {
-                        // Silently continue loading other panes
                     }
                 }
             }
@@ -262,13 +270,9 @@ impl App {
     }
 
     pub fn draw(&mut self, f: &mut Frame) {
-        // Update cursor blink timer for blinking cursor
-        // This will be checked in draw_chat_pane_impl
-        // Check typing indicators for expiry
         for pane in &mut self.panes {
             pane.check_typing_expired();
         }
-        // Check status message expiry
         if let Some(expire) = self.status_expire {
             if std::time::Instant::now() >= expire {
                 self.status_message = None;
@@ -290,8 +294,9 @@ impl App {
 
         let (chat_area, pane_area) = if self.show_chat_list {
             let total_width = outer[0].width;
-            let base_chat_width = total_width.saturating_mul(20) / 100;
-            let chat_width = base_chat_width.saturating_sub(5).max(10);
+            let min_pane_width = 20;
+            let max_chat_width = total_width.saturating_sub(min_pane_width).max(10);
+            let chat_width = self.chat_list_width.clamp(10, max_chat_width);
             let chunks = Layout::default()
                 .direction(Direction::Horizontal)
                 .constraints([Constraint::Length(chat_width), Constraint::Min(0)])
@@ -301,7 +306,6 @@ impl App {
             (None, outer[0])
         };
 
-        // Store chat list area for mouse handling
         if let Some(area) = chat_area {
             self.chat_list_area = Some(area);
             self.draw_chat_list(f, area);
@@ -350,16 +354,62 @@ impl App {
             self.user_colors.insert(sender_id, color);
         }
 
+        let mut render_pane_area = pane_area;
+        if self.inline_preview_path.is_some() {
+            let split = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
+                .split(pane_area);
+            render_pane_area = split[0];
+            let preview_panel = split[1];
+            let preview_title = self
+                .inline_preview_name
+                .as_deref()
+                .unwrap_or("Inline image preview");
+            let zoom = self.inline_preview_zoom_pct;
+            let idx_info = if let (Some(i), total) = (self.inline_preview_index, self.inline_preview_image_msg_ids.len()) {
+                if total > 0 {
+                    format!(" [{}/{}]", i + 1, total)
+                } else {
+                    String::new()
+                }
+            } else {
+                String::new()
+            };
+            let block = Block::default()
+                .borders(Borders::ALL)
+                .title(format!("Preview: {} ({}%){}", preview_title, zoom, idx_info));
+            f.render_widget(block, preview_panel);
+
+            let inner = preview_panel.inner(ratatui::layout::Margin {
+                horizontal: if self.show_borders { 1 } else { 0 },
+                vertical: if self.show_borders { 1 } else { 0 },
+            });
+            let col = inner.x.saturating_add(1);
+            let row = inner.y.saturating_add(1);
+            let cols = inner.width.saturating_sub(1).max(1);
+            let rows = inner.height.saturating_sub(1).max(1);
+            self.inline_preview_rect = Some((col, row, cols, rows));
+        } else {
+            self.inline_preview_rect = None;
+        }
+
         let render_fn = |f: &mut Frame, area: Rect, pane: &ChatPane, is_focused: bool| {
             self.draw_chat_pane_impl(f, area, pane, is_focused);
         };
 
         let mut pane_areas = std::collections::HashMap::new();
         self.pane_tree
-            .render(f, pane_area, &self.panes, self.focused_pane_idx, &render_fn, &mut pane_areas);
+            .render(
+                f,
+                render_pane_area,
+                &self.panes,
+                self.focused_pane_idx,
+                &render_fn,
+                &mut pane_areas,
+            );
         self.pane_areas = pane_areas;
 
-        // Draw status bar
         if has_status {
             if let Some(ref msg) = self.status_message {
                 let status = Paragraph::new(msg.as_str())
@@ -370,16 +420,14 @@ impl App {
     }
 
     fn draw_chat_list(&self, f: &mut Frame, area: Rect) {
-        // Find which chat is open in the focused pane
         let active_chat_id = self.panes
             .get(self.focused_pane_idx)
             .and_then(|p| p.chat_id);
         
         let max_width = area.width.saturating_sub(6).max(1) as usize;
-        let (unread_group, active_group, other_group) = self.chat_list_groups();
+        let (unread_group, active_group, muted_group, other_group) = self.chat_list_groups();
 
         let build_item = |chat: &ChatInfo| -> ListItem {
-            // Highlight if this chat is open in the focused pane
             let base_style = if Some(chat.id) == active_chat_id {
                 Style::default()
                     .fg(Color::Yellow)
@@ -390,7 +438,11 @@ impl App {
 
             let unread_marker = if chat.unread > 0 { "▶ " } else { "" };
             let unread_count = if chat.unread > 0 {
-                format!("({}) ", chat.unread)
+                if self.show_unread_count {
+                    format!("({}) ", chat.unread)
+                } else {
+                    String::new()
+                }
             } else {
                 String::new()
             };
@@ -414,7 +466,6 @@ impl App {
             }
             spans.push(ratatui::text::Span::styled(name_part, base_style));
 
-            // Truncate spans to fit
             let total_chars: usize = spans.iter().map(|s| s.content.chars().count()).sum();
             let truncated = total_chars > max_width && max_width > 0;
             let mut remaining = if truncated { max_width.saturating_sub(1) } else { max_width };
@@ -468,6 +519,13 @@ impl App {
             }
         }
 
+        if !muted_group.is_empty() {
+            items.push(ListItem::new("Muted").style(header_style));
+            for chat_idx in muted_group.iter() {
+                items.push(build_item(&self.chats[*chat_idx]));
+            }
+        }
+
         let border_style = if self.focus_on_chat_list {
             Style::default().fg(Color::Green)
         } else {
@@ -498,7 +556,6 @@ impl App {
     ) {
         let has_reply_preview = pane.reply_preview.is_some();
 
-        // Calculate input height dynamically based on text width
         let border_overhead = if self.show_borders { 2 } else { 0 };
         let header_height = if self.show_borders { 3 } else { 1 };
         let inner_width = area.width.saturating_sub(if self.show_borders { 2 } else { 0 }).max(1) as usize;
@@ -506,11 +563,9 @@ impl App {
             let buf = &pane.input_buffer;
             let mut lines: u16 = 0;
             for line in buf.split('\n') {
-                // Each logical line wraps based on its length (+ cursor on last segment)
                 let len = line.len();
                 lines += ((len as f64) / (inner_width as f64)).ceil().max(1.0) as u16;
             }
-            // Account for cursor on the last line
             let last_line_len = buf.rsplit('\n').next().map_or(buf.len(), |l| l.len()) + 1;
             if last_line_len > inner_width {
                 let without_cursor = buf.rsplit('\n').next().map_or(buf.len(), |l| l.len());
@@ -522,19 +577,19 @@ impl App {
         } else {
             1
         };
-        let input_height = text_lines + border_overhead + 1; // +1 for spacing below
+        let input_height = text_lines + border_overhead + 1;
 
         let constraints = if has_reply_preview {
             vec![
                 Constraint::Length(header_height),
-                Constraint::Min(0),     // messages
-                Constraint::Length(1),  // reply preview
+                Constraint::Min(0),
+                Constraint::Length(1),
                 Constraint::Length(input_height),
             ]
         } else {
             vec![
                 Constraint::Length(header_height),
-                Constraint::Min(0),     // messages
+                Constraint::Min(0),
                 Constraint::Length(input_height),
             ]
         };
@@ -544,15 +599,12 @@ impl App {
             .constraints(constraints)
             .split(area);
 
-        // Header with online status, username, pinned, typing
         let header_style = if is_focused {
             if self.focus_on_chat_list {
-                // Show which pane will receive the next chat from list
                 Style::default()
                     .fg(Color::Yellow)
                     .add_modifier(Modifier::BOLD)
             } else {
-                // Active input pane
                 Style::default()
                     .fg(Color::Green)
                     .add_modifier(Modifier::BOLD)
@@ -577,10 +629,8 @@ impl App {
             .style(header_style);
         f.render_widget(header, chunks[0]);
 
-        // Messages - use rich formatted data if available, otherwise plain messages
         let message_width = chunks[1].width.saturating_sub(4) as usize;
         
-        // Check if this is a group chat
         let is_group_chat = if let Some(chat_id) = pane.chat_id {
             self.chats.iter().any(|c| c.id == chat_id && c.is_group)
         } else {
@@ -588,7 +638,6 @@ impl App {
         };
         
         let display_lines = if !pane.msg_data.is_empty() {
-            // Use msg_data for rich formatting
             let filter_type = pane
                 .filter_type
                 .as_ref()
@@ -610,17 +659,16 @@ impl App {
                 filter_type,
                 filter_value,
                 pane.unread_count_at_load,
+                self.show_unread_count,
                 &self.aliases.map,
             );
             
-            // Append any status messages from pane.messages (like "✓ Replied to #5")
             if !pane.messages.is_empty() {
-                lines.push(String::new()); // Separator
+                lines.push(String::new());
                 lines.extend(pane.messages.clone());
             }
             lines
         } else {
-            // Fallback to plain messages (for status messages, etc.)
             pane.messages.clone()
         };
 
@@ -808,7 +856,7 @@ impl App {
             })
             .collect();
 
-        let border_lines = if self.show_borders { 2 } else { 1 }; // 1 for spacing above input in borderless
+        let border_lines = if self.show_borders { 2 } else { 1 };
         let available_height = chunks[1].height.saturating_sub(border_lines) as usize;
         let total_lines = message_lines.len();
         
@@ -844,7 +892,6 @@ impl App {
         };
         let mut input_text = if is_focused { pane.input_buffer.clone() } else { String::new() };
         
-        // Show block cursor at cursor position when focused
         if is_focused && !self.focus_on_chat_list {
             let cursor_pos = pane.input_cursor.min(input_text.len());
             input_text.insert(cursor_pos, '█');
@@ -866,18 +913,178 @@ impl App {
         Ok(())
     }
 
-    /// Show a status notification that auto-expires
     pub fn notify(&mut self, message: &str) {
         self.status_message = Some(message.to_string());
         self.status_expire =
             Some(std::time::Instant::now() + std::time::Duration::from_secs(3));
     }
 
-    /// Show a status notification with custom timeout duration
     pub fn notify_with_duration(&mut self, message: &str, duration_secs: u64) {
         self.status_message = Some(message.to_string());
         self.status_expire =
             Some(std::time::Instant::now() + std::time::Duration::from_secs(duration_secs));
+    }
+
+    pub fn open_inline_preview(&mut self, path: String) {
+        let name = std::path::Path::new(&path)
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| "image".to_string());
+        self.inline_preview_path = Some(path);
+        self.inline_preview_name = Some(name);
+        self.inline_preview_dirty = true;
+        self.inline_preview_last_sig = None;
+        self.needs_redraw = true;
+    }
+
+    pub fn open_inline_preview_for_message(
+        &mut self,
+        pane_idx: usize,
+        chat_id: i64,
+        message_id: i32,
+        path: String,
+    ) {
+        self.open_inline_preview(path);
+        self.inline_preview_chat_id = Some(chat_id);
+        self.inline_preview_zoom_pct = 100;
+
+        let mut image_ids = Vec::new();
+        if let Some(pane) = self.panes.get(pane_idx) {
+            for m in &pane.msg_data {
+                let is_image = matches!(m.media_type.as_deref(), Some("photo" | "sticker" | "gif"));
+                if is_image {
+                    image_ids.push(m.msg_id);
+                }
+            }
+        }
+        self.inline_preview_index = image_ids.iter().position(|&id| id == message_id);
+        self.inline_preview_image_msg_ids = image_ids;
+    }
+
+    pub fn close_inline_preview(&mut self) {
+        self.inline_preview_path = None;
+        self.inline_preview_name = None;
+        self.inline_preview_rect = None;
+        self.inline_preview_dirty = false;
+        self.inline_preview_last_sig = None;
+        self.inline_preview_zoom_pct = 100;
+        self.inline_preview_chat_id = None;
+        self.inline_preview_image_msg_ids.clear();
+        self.inline_preview_index = None;
+        let _ = kitty_preview::clear_all_images();
+        self.needs_redraw = true;
+    }
+
+    pub fn zoom_inline_preview_in(&mut self) {
+        self.inline_preview_zoom_pct = (self.inline_preview_zoom_pct.saturating_add(10)).min(300);
+        self.inline_preview_dirty = true;
+        self.needs_redraw = true;
+    }
+
+    pub fn zoom_inline_preview_out(&mut self) {
+        self.inline_preview_zoom_pct = self.inline_preview_zoom_pct.saturating_sub(10).max(30);
+        self.inline_preview_dirty = true;
+        self.needs_redraw = true;
+    }
+
+    fn image_path_for_preview(&mut self, source_path: &str, chat_id: i64, msg_id: i32) -> String {
+        if source_path.to_ascii_lowercase().ends_with(".png") {
+            return source_path.to_string();
+        }
+        match image::open(source_path) {
+            Ok(img) => {
+                let png_path = std::env::temp_dir().join(format!(
+                    "telegram_preview_{}_{}.png",
+                    chat_id, msg_id
+                ));
+                if let Err(e) = img.save_with_format(&png_path, image::ImageFormat::Png) {
+                    self.notify(&format!("Preview conversion failed: {}", e));
+                    source_path.to_string()
+                } else {
+                    png_path.to_string_lossy().to_string()
+                }
+            }
+            Err(e) => {
+                self.notify(&format!("Preview decode failed: {}", e));
+                source_path.to_string()
+            }
+        }
+    }
+
+    pub async fn preview_next_image(&mut self) -> Result<()> {
+        self.preview_step_image(1).await
+    }
+
+    pub async fn preview_prev_image(&mut self) -> Result<()> {
+        self.preview_step_image(-1).await
+    }
+
+    async fn preview_step_image(&mut self, delta: i32) -> Result<()> {
+        let Some(chat_id) = self.inline_preview_chat_id else {
+            return Ok(());
+        };
+        if self.inline_preview_image_msg_ids.is_empty() {
+            self.notify("No image list available for preview");
+            return Ok(());
+        }
+
+        let current = self.inline_preview_index.unwrap_or(0);
+        let total = self.inline_preview_image_msg_ids.len() as i32;
+        let mut next = current as i32 + delta;
+        if next < 0 {
+            next = total - 1;
+        } else if next >= total {
+            next = 0;
+        }
+        let next_usize = next as usize;
+        let msg_id = self.inline_preview_image_msg_ids[next_usize];
+        self.notify("Loading next image...");
+        let downloaded = self
+            .telegram
+            .download_media_by_id(chat_id, msg_id, &std::env::temp_dir())
+            .await?;
+        let preview_path = self.image_path_for_preview(&downloaded, chat_id, msg_id);
+        self.inline_preview_index = Some(next_usize);
+        self.inline_preview_name = std::path::Path::new(&preview_path)
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string());
+        self.inline_preview_path = Some(preview_path);
+        self.inline_preview_dirty = true;
+        self.needs_redraw = true;
+        Ok(())
+    }
+
+    pub fn maybe_render_inline_preview(&mut self) {
+        let Some(path) = self.inline_preview_path.clone() else {
+            return;
+        };
+        let Some((col, row, cols, rows)) = self.inline_preview_rect else {
+            return;
+        };
+        let scaled_cols = (((cols as u32) * (self.inline_preview_zoom_pct as u32)) / 100)
+            .max(1)
+            .min((cols as u32) * 3) as u16;
+        let scaled_rows = (((rows as u32) * (self.inline_preview_zoom_pct as u32)) / 100)
+            .max(1)
+            .min((rows as u32) * 3) as u16;
+
+        let sig = format!(
+            "{}:{}:{}:{}:{}:{}",
+            path, col, row, scaled_cols, scaled_rows, self.inline_preview_zoom_pct
+        );
+        if !self.inline_preview_dirty && self.inline_preview_last_sig.as_deref() == Some(&sig) {
+            return;
+        }
+        if let Err(e) = kitty_preview::clear_all_images() {
+            self.notify(&format!("Preview clear failed: {}", e));
+            return;
+        }
+        if let Err(e) = kitty_preview::render_png_at(&path, col, row, scaled_cols, scaled_rows) {
+            self.notify(&format!("Inline preview failed: {}", e));
+            return;
+        }
+        self.inline_preview_dirty = false;
+        self.inline_preview_last_sig = Some(sig);
     }
 
     pub async fn open_chat_in_pane(&mut self, pane_idx: usize, chat_id: i64, chat_name: &str) {
@@ -914,13 +1121,11 @@ impl App {
             pane.scroll_offset = 0;
             pane.format_cache.clear();
 
-            // Set username from chats list if available
             if let Some(chat_info) = self.chats.iter().find(|c| c.id == chat_id) {
                 pane.username = chat_info.username.clone();
             }
         }
 
-        // Mark chat as read
         if let Some(chat_info) = self.chats.iter_mut().find(|c| c.id == chat_id) {
             chat_info.unread = 0;
         }
@@ -936,9 +1141,6 @@ impl App {
         }
     }
 
-    // =========================================================================
-    // Split pane management
-    // =========================================================================
 
     pub fn split_vertical(&mut self) {
         let new_pane = ChatPane::new();
@@ -993,7 +1195,6 @@ impl App {
     }
 
     pub fn toggle_split_direction(&mut self) {
-        // Find the parent split node that directly contains the focused pane
         if Self::toggle_split_direction_recursive(&mut self.pane_tree, self.focused_pane_idx) {
         } else {
             self.notify("No split to toggle - pane is not in a split");
@@ -1004,20 +1205,17 @@ impl App {
         match node {
             PaneNode::Single(_) => false,
             PaneNode::Split { direction, children } => {
-                // Check if target_idx is directly a child of this split (not nested deeper)
                 let is_direct_child = children.iter().any(|child| {
                     matches!(child.as_ref(), PaneNode::Single(idx) if *idx == target_idx)
                 });
 
                 if is_direct_child {
-                    // This is the parent split - toggle its direction
                     *direction = match *direction {
                         SplitDirection::Vertical => SplitDirection::Horizontal,
                         SplitDirection::Horizontal => SplitDirection::Vertical,
                     };
                     true
                 } else {
-                    // Target might be nested deeper, search in children
                     for child in children.iter_mut() {
                         if Self::toggle_split_direction_recursive(child, target_idx) {
                             return true;
@@ -1063,23 +1261,18 @@ impl App {
         }
 
         if self.focus_on_chat_list {
-            // Going from chat list to first pane
             self.focus_on_chat_list = false;
             self.focused_pane_idx = all_panes[0];
             self.mark_pane_chat_read(self.focused_pane_idx);
         } else {
-            // Find current pane position
             if let Some(current_pos) = all_panes.iter().position(|&idx| idx == self.focused_pane_idx) {
                 if current_pos + 1 < all_panes.len() {
-                    // Go to next pane
                     self.focused_pane_idx = all_panes[current_pos + 1];
                     self.mark_pane_chat_read(self.focused_pane_idx);
                 } else {
-                    // Last pane, go back to chat list
                     self.focus_on_chat_list = true;
                 }
             } else {
-                // Current pane not found, reset to first
                 self.focused_pane_idx = all_panes[0];
                 self.mark_pane_chat_read(self.focused_pane_idx);
             }
@@ -1093,7 +1286,6 @@ impl App {
         }
 
         if self.focus_on_chat_list {
-            // Go to last pane
             self.focus_on_chat_list = false;
             self.focused_pane_idx = *all_panes.last().unwrap();
             self.mark_pane_chat_read(self.focused_pane_idx);
@@ -1135,9 +1327,6 @@ impl App {
         }
     }
 
-    // =========================================================================
-    // Toggle settings (matching Python's action_toggle_*)
-    // =========================================================================
 
     pub fn toggle_reactions(&mut self) {
         self.show_reactions = !self.show_reactions;
@@ -1189,6 +1378,25 @@ impl App {
         self.notify(&format!("Chat list: {}", if self.show_chat_list { "ON" } else { "OFF" }));
     }
 
+    pub fn toggle_unread_count(&mut self) {
+        self.show_unread_count = !self.show_unread_count;
+        self.notify(&format!(
+            "Unread count: {}",
+            if self.show_unread_count { "ON" } else { "OFF" }
+        ));
+        self.refresh_all_pane_displays();
+    }
+
+    pub fn resize_chat_list_narrower(&mut self) {
+        self.chat_list_width = self.chat_list_width.saturating_sub(2).max(10);
+        self.notify(&format!("Sidebar width: {}", self.chat_list_width));
+    }
+
+    pub fn resize_chat_list_wider(&mut self) {
+        self.chat_list_width = self.chat_list_width.saturating_add(2).max(10);
+        self.notify(&format!("Sidebar width: {}", self.chat_list_width));
+    }
+
     pub fn toggle_user_colors(&mut self) {
         self.show_user_colors = !self.show_user_colors;
         let status = if self.show_user_colors { "ON" } else { "OFF" };
@@ -1201,7 +1409,39 @@ impl App {
         self.notify(&format!("Borders: {}", if self.show_borders { "ON" } else { "OFF" }));
     }
 
-    fn chat_list_groups(&self) -> (Vec<usize>, Vec<usize>, Vec<usize>) {
+    pub fn toggle_mute_selected_chat(&mut self) {
+        let chat_id = if self.focus_on_chat_list {
+            let ordered = self.chat_list_order();
+            if let Some(&chat_idx) = ordered.get(self.selected_chat_idx) {
+                self.chats.get(chat_idx).map(|c| c.id)
+            } else {
+                None
+            }
+        } else {
+            self.panes.get(self.focused_pane_idx).and_then(|p| p.chat_id)
+        };
+
+        let Some(chat_id) = chat_id else {
+            self.notify("No chat selected to mute");
+            return;
+        };
+
+        let chat_name = self
+            .chats
+            .iter()
+            .find(|c| c.id == chat_id)
+            .map(|c| c.name.clone())
+            .unwrap_or_else(|| "Chat".to_string());
+
+        if self.muted_chat_ids.remove(&chat_id) {
+            self.notify(&format!("Unmuted: {}", chat_name));
+        } else {
+            self.muted_chat_ids.insert(chat_id);
+            self.notify(&format!("Muted: {}", chat_name));
+        }
+    }
+
+    fn chat_list_groups(&self) -> (Vec<usize>, Vec<usize>, Vec<usize>, Vec<usize>) {
         let mut open_chat_ids = std::collections::HashSet::new();
         for pane in &self.panes {
             if let Some(chat_id) = pane.chat_id {
@@ -1211,11 +1451,14 @@ impl App {
 
         let mut unread = Vec::new();
         let mut active = Vec::new();
+        let mut muted = Vec::new();
         let mut other = Vec::new();
 
         for (idx, chat) in self.chats.iter().enumerate() {
             if open_chat_ids.contains(&chat.id) {
                 active.push(idx);
+            } else if self.muted_chat_ids.contains(&chat.id) {
+                muted.push(idx);
             } else if chat.unread > 0 {
                 unread.push(idx);
             } else {
@@ -1223,15 +1466,16 @@ impl App {
             }
         }
 
-        (unread, active, other)
+        (unread, active, muted, other)
     }
 
     fn chat_list_order(&self) -> Vec<usize> {
-        let (unread, active, other) = self.chat_list_groups();
+        let (unread, active, muted, other) = self.chat_list_groups();
         let mut ordered = Vec::with_capacity(self.chats.len());
         ordered.extend(unread);
         ordered.extend(active);
         ordered.extend(other);
+        ordered.extend(muted);
         ordered
     }
 
@@ -1251,12 +1495,9 @@ impl App {
     }
 
 
-    /// Handle mouse click to select pane or open chat
     pub fn handle_mouse_click(&mut self, x: u16, y: u16) {
-        // Check if clicking on a pane
         for (&pane_idx, &area) in &self.pane_areas {
             if x >= area.x && x < area.x + area.width && y >= area.y && y < area.y + area.height {
-                // Clicked on this pane - make it active
                 self.focused_pane_idx = pane_idx;
                 self.focus_on_chat_list = false;
                 self.mark_pane_chat_read(self.focused_pane_idx);
@@ -1265,18 +1506,15 @@ impl App {
         }
     }
 
-    /// Handle mouse click on chat list
     pub async fn handle_chat_list_click(&mut self, y: u16, list_area: Rect) -> Result<()> {
-        // Calculate which chat was clicked based on Y position
-        // Each chat item is 1 line, starting at list_area.y + border_offset (after top border if present)
         let border_offset = if self.show_borders { 1 } else { 0 };
         if y < list_area.y + border_offset || y >= list_area.y + list_area.height - border_offset {
-            return Ok(()); // Clicked on border or outside
+            return Ok(());
         }
         
         let relative_y = (y - list_area.y - border_offset) as usize;
         let ordered_chats = self.chat_list_order();
-        let (unread_group, active_group, other_group) = self.chat_list_groups();
+        let (unread_group, active_group, muted_group, other_group) = self.chat_list_groups();
 
         let mut row_map: Vec<Option<usize>> = Vec::new();
         let mut ordered_idx = 0usize;
@@ -1301,9 +1539,15 @@ impl App {
                 ordered_idx += 1;
             }
         }
+        if !muted_group.is_empty() {
+            row_map.push(None);
+            for _ in muted_group.iter() {
+                row_map.push(Some(ordered_idx));
+                ordered_idx += 1;
+            }
+        }
 
         if relative_y < row_map.len() {
-            // Open this chat in the focused pane
             if let Some(chat_idx) = row_map[relative_y].and_then(|idx| ordered_chats.get(idx).copied()) {
                 let chat = &self.chats[chat_idx];
                 let chat_id = chat.id;
@@ -1338,7 +1582,7 @@ impl App {
                     pane.chat_name = chat_name;
                     pane.username = chat_username;
                     pane.msg_data = msg_data;
-                    pane.messages.clear(); // Clear status messages when switching chats
+                    pane.messages.clear();
                     pane.reply_to_message = None;
                     pane.hide_reply_preview();
                     pane.scroll_offset = 0;
@@ -1355,17 +1599,12 @@ impl App {
         Ok(())
     }
 
-    /// Refresh all pane message displays (after toggling display settings)
     fn refresh_all_pane_displays(&mut self) {
-        // Clear format caches so they re-render with new settings
         for pane in &mut self.panes {
             pane.format_cache.clear();
         }
     }
 
-    // =========================================================================
-    // Input handling
-    // =========================================================================
 
     pub fn handle_up(&mut self) {
         if self.focus_on_chat_list {
@@ -1376,12 +1615,10 @@ impl App {
                 self.selected_chat_idx -= 1;
             }
         } else {
-            // Browse input history
             if !self.input_history.is_empty() {
                 if let Some(pane) = self.panes.get_mut(self.focused_pane_idx) {
                     match self.history_idx {
                         None => {
-                            // Save current input and start browsing
                             self.history_temp = pane.input_buffer.clone();
                             self.history_idx = Some(self.input_history.len() - 1);
                             pane.input_buffer = self.input_history[self.input_history.len() - 1].clone();
@@ -1406,7 +1643,6 @@ impl App {
                 self.selected_chat_idx += 1;
             }
         } else {
-            // Browse input history
             if let Some(pane) = self.panes.get_mut(self.focused_pane_idx) {
                 if let Some(idx) = self.history_idx {
                     if idx + 1 < self.input_history.len() {
@@ -1414,7 +1650,6 @@ impl App {
                         pane.input_buffer = self.input_history[idx + 1].clone();
                         pane.input_cursor = pane.input_buffer.len();
                     } else {
-                        // Back to current input
                         self.history_idx = None;
                         pane.input_buffer = self.history_temp.clone();
                         pane.input_cursor = pane.input_buffer.len();
@@ -1440,7 +1675,6 @@ impl App {
         }
     }
 
-    /// Handle Tab key: try autocomplete first, then cycle focus
     pub fn handle_tab(&mut self) {
         let is_empty = self.panes.get(self.focused_pane_idx)
             .map_or(true, |p| p.input_buffer.is_empty());
@@ -1450,7 +1684,6 @@ impl App {
             return;
         }
 
-        // Try autocomplete
         if let Some(pane) = self.panes.get_mut(self.focused_pane_idx) {
             let (completed, hint) = try_autocomplete(&pane.input_buffer);
             if let Some(completed) = completed {
@@ -1478,7 +1711,6 @@ impl App {
                     let chat_username = chat.username.clone();
                     let raw_messages = self.telegram.get_messages(chat_id, 50).await?;
 
-                    // Convert to MessageData for proper formatting support
                     let msg_data: Vec<crate::widgets::MessageData> = raw_messages
                         .iter()
                         .map(|(msg_id, sender_id, sender_name, text, reply_to_id, media_type, reactions)| {
@@ -1507,13 +1739,11 @@ impl App {
                         pane.chat_name = chat_name;
                         pane.username = chat_username;
                         pane.msg_data = msg_data;
-                        pane.messages.clear(); // Clear status messages when switching chats
+                        pane.messages.clear();
                         pane.reply_to_message = None;
                         pane.hide_reply_preview();
-                        // Don't set scroll_offset yet - let it be calculated during render
                         pane.scroll_offset = 0;
 
-                        // Mark chat as read
                         if let Some(chat_info) =
                             self.chats.iter_mut().find(|c| c.id == chat_id)
                         {
@@ -1525,14 +1755,12 @@ impl App {
                 }
             }
         } else if !self.focus_on_chat_list {
-            // Get input from active pane
             let (input_text, _chat_id, _reply_to_id) = if let Some(pane) = self.panes.get(self.focused_pane_idx) {
                 (pane.input_buffer.clone(), pane.chat_id, pane.reply_to_message)
             } else {
                 return Ok(());
             };
 
-            // Save to history (no duplicates)
             if self.input_history.last().map_or(true, |last| last != &input_text) {
                 self.input_history.push(input_text.clone());
                 if self.input_history.len() > 100 {
@@ -1542,7 +1770,6 @@ impl App {
             self.history_idx = None;
             self.history_temp.clear();
 
-            // Try command handling
             if input_text.starts_with('/') {
                 let focused = self.focused_pane_idx;
                 let handled = CommandHandler::handle(self, &input_text, focused).await?;
@@ -1555,14 +1782,12 @@ impl App {
                 }
             }
 
-            // Handle reply mode or normal send
             if let Some(pane) = self.panes.get_mut(self.focused_pane_idx) {
                 if let (Some(chat_id), Some(reply_to_id)) =
                     (pane.chat_id, pane.reply_to_message)
                 {
-                    // FIRST: Add message DIRECTLY to pane IMMEDIATELY - no waiting!
                     let new_msg = crate::widgets::MessageData {
-                        msg_id: 0, // Temporary ID
+                        msg_id: 0,
                         sender_id: self.my_user_id,
                         sender_name: "You".to_string(),
                         text: input_text.clone(),
@@ -1583,7 +1808,6 @@ impl App {
                     pane.input_buffer.clear();
                     pane.input_cursor = 0;
                     
-                    // THEN: Send message in background - don't wait!
                     let telegram = self.telegram.clone();
                     let chat_id_copy = chat_id;
                     let reply_to_id_copy = reply_to_id;
@@ -1592,9 +1816,8 @@ impl App {
                         let _ = telegram.reply_to_message(chat_id_copy, reply_to_id_copy, &input_text_copy).await;
                     });
                 } else if let Some(chat_id) = pane.chat_id {
-                    // FIRST: Add message DIRECTLY to pane IMMEDIATELY - no waiting!
                     let new_msg = crate::widgets::MessageData {
-                        msg_id: 0, // Temporary ID
+                        msg_id: 0,
                         sender_id: self.my_user_id,
                         sender_name: "You".to_string(),
                         text: input_text.clone(),
@@ -1613,7 +1836,6 @@ impl App {
                     pane.input_buffer.clear();
                     pane.input_cursor = 0;
                     
-                    // THEN: Send message in background - don't wait!
                     let telegram = self.telegram.clone();
                     let chat_id_copy = chat_id;
                     let input_text_copy = input_text.clone();
@@ -1693,12 +1915,8 @@ impl App {
         }
     }
 
-    // =========================================================================
-    // New message handling
-    // =========================================================================
 
     pub async fn process_telegram_events(&mut self) -> Result<bool> {
-        // Process incoming updates
         let updates = self.telegram.poll_updates().await?;
         let had_updates = !updates.is_empty();
 
@@ -1710,10 +1928,8 @@ impl App {
                     text,
                     is_outgoing,
                 } => {
-                    // Normalize chat_id
                     let normalized_id = crate::utils::normalize_chat_id(chat_id);
 
-                    // Check if any pane has this chat open
                     let matching_panes: Vec<usize> = self
                         .panes
                         .iter()
@@ -1725,8 +1941,6 @@ impl App {
                         .collect();
 
                 if !matching_panes.is_empty() {
-                    // Always reload messages to get the real message ID and full data from Telegram
-                    // This replaces the optimistic local echo (msg_id: 0) with the real message
                     let target_id = if self
                         .panes
                         .iter()
@@ -1740,7 +1954,6 @@ impl App {
                     if let Ok(raw_messages) =
                         self.telegram.get_messages(target_id, 50).await
                     {
-                        // Convert to MessageData for proper formatting support
                         let msg_data: Vec<crate::widgets::MessageData> = raw_messages
                             .iter()
                             .map(|(msg_id, sender_id, sender_name, text, reply_to_id, media_type, reactions)| {
@@ -1766,13 +1979,11 @@ impl App {
                         for idx in &matching_panes {
                             if let Some(pane) = self.panes.get_mut(*idx) {
                                 pane.msg_data = msg_data.clone();
-                                pane.format_cache.clear(); // Clear cache so messages are re-rendered
-                                // Don't clear messages - they may contain status messages
+                                pane.format_cache.clear();
                             }
                         }
                     }
                 } else {
-                        // Increment unread for chats not in view
                         if let Some(chat_info) = self
                             .chats
                             .iter_mut()
@@ -1791,12 +2002,14 @@ impl App {
                                 text.clone()
                             };
 
-                            // Desktop notification
-                            if self.show_notifications && !is_outgoing {
+                            let is_muted = self.muted_chat_ids.contains(&chat_info.id);
+                            if self.show_notifications && !is_outgoing && !is_muted {
                                 send_desktop_notification(&chat_name, &preview);
                             }
 
-                            self.notify(&format!("{}: {}", chat_name, preview));
+                            if !is_muted {
+                                self.notify(&format!("{}: {}", chat_name, preview));
+                            }
                         }
                     }
                 }
@@ -1819,11 +2032,10 @@ impl App {
         Ok(had_updates)
     }
 
-    // =========================================================================
-    // State persistence
-    // =========================================================================
 
     pub fn save_state(&self) -> Result<()> {
+        let mut muted_chat_ids: Vec<i64> = self.muted_chat_ids.iter().copied().collect();
+        muted_chat_ids.sort_unstable();
         let layout = LayoutData {
             panes: self
                 .panes
@@ -1845,6 +2057,7 @@ impl App {
                 .collect(),
             focused_pane: self.focused_pane_idx,
             pane_tree: Some(self.pane_tree.clone()),
+            muted_chat_ids,
         };
         layout.save(&self.config)?;
 
@@ -1860,6 +2073,8 @@ impl App {
         config.settings.show_user_colors = self.show_user_colors;
         config.settings.show_borders = self.show_borders;
         config.settings.show_chat_list = self.show_chat_list;
+        config.settings.chat_list_width = self.chat_list_width;
+        config.settings.show_unread_count = self.show_unread_count;
         config.save()?;
 
         Ok(())

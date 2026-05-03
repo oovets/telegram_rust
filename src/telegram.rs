@@ -466,39 +466,23 @@ impl TelegramClient {
     pub async fn download_media_by_id(
         &self,
         chat_id: i64,
-        message_id: i32,  // Actual Telegram message ID
+        message_id: i32,
         path: &std::path::Path,
     ) -> Result<String> {
-        crate::log_info!("download_media_by_id: Starting download for chat_id={}, msg_id={}", chat_id, message_id);
-        
         let client = self.client.lock().await;
         let chat = self.find_chat_inner(&client, chat_id).await?;
 
         if let Some(chat) = chat {
-            crate::log_info!("download_media_by_id: Found chat, getting message by ID...");
-            
-            // Get the specific message by ID
             let messages = client.get_messages_by_id(&chat, &[message_id]).await?;
             
             if let Some(message) = messages.into_iter().next() {
                 if let Some(message) = message {
-                    crate::log_info!("download_media_by_id: Found message with ID {}", message_id);
-                    crate::log_info!("download_media_by_id: Message text: '{}'", message.text());
-                    crate::log_info!("download_media_by_id: Message has_media: {}", message.media().is_some());
-                    
                     if let Some(media) = message.media() {
-                        crate::log_info!("download_media_by_id: Message has media!");
-                    
-                    // Determine file extension based on media type
                     use grammers_client::types::Media;
                     let ext = match &media {
-                        Media::Photo(_) => {
-                            crate::log_info!("download_media_by_id: Media type is Photo");
-                            "jpg"
-                        },
+                        Media::Photo(_) => "jpg",
                         Media::Document(doc) => {
                             if let Some(mime) = doc.mime_type() {
-                                crate::log_info!("download_media_by_id: Media type is Document with mime: {}", mime);
                                 if mime.starts_with("video/") {
                                     "mp4"
                                 } else if mime.starts_with("audio/") {
@@ -507,49 +491,33 @@ impl TelegramClient {
                                     "dat"
                                 }
                             } else {
-                                crate::log_info!("download_media_by_id: Media type is Document with no mime type");
                                 "dat"
                             }
                         }
-                        _ => {
-                            crate::log_info!("download_media_by_id: Media type is other");
-                            "dat"
-                        },
+                        _ => "dat",
                     };
 
                     let download_path = path.join(format!("telegram_msg_{}_{}.{}", chat_id, message_id, ext));
-                    crate::log_info!("download_media_by_id: Download path: {}", download_path.display());
-                    
-                    // Download media
                     use grammers_client::types::Downloadable;
-                    crate::log_info!("download_media_by_id: Starting download chunks...");
                     let mut download = client.iter_download(&Downloadable::Media(media));
                     let mut buf = Vec::new();
-                    let mut chunk_count = 0;
                     while let Some(chunk) = download.next().await? {
-                        chunk_count += 1;
                         buf.extend_from_slice(&chunk);
                     }
-                    crate::log_info!("download_media_by_id: Downloaded {} chunks, total size {} bytes", chunk_count, buf.len());
                     
                     std::fs::write(&download_path, &buf)?;
-                    crate::log_info!("download_media_by_id: Successfully wrote file to disk");
                     return Ok(download_path.to_string_lossy().to_string());
                 } else {
-                    crate::log_error!("download_media_by_id: Message has no media");
                     anyhow::bail!("Message has no media");
                 }
                 } else {
-                    crate::log_error!("download_media_by_id: Message with ID {} not found or is None", message_id);
                     anyhow::bail!("Message not found");
                 }
             } else {
-                crate::log_error!("download_media_by_id: No messages returned for ID {}", message_id);
                 anyhow::bail!("Message not found");
             }
         }
 
-        crate::log_error!("download_media_by_id: Chat not found");
         anyhow::bail!("Chat not found")
     }
 
@@ -557,56 +525,35 @@ impl TelegramClient {
     pub async fn download_media(
         &self,
         chat_id: i64,
-        message_num: i32,  // Message number in display (#1, #2, etc)
+        message_num: i32,
         path: &std::path::Path,
     ) -> Result<String> {
-        crate::log_info!("download_media: Starting download for chat_id={}, msg_num={}", chat_id, message_num);
-        
         let client = self.client.lock().await;
         let chat = self.find_chat_inner(&client, chat_id).await?;
 
         if let Some(chat) = chat {
-            crate::log_info!("download_media: Found chat, fetching messages...");
-            
-            // Get all messages to find the one at message_num position
-            // Filter to match what get_messages does (messages with text or media)
             let mut messages_vec = Vec::new();
             let mut iter = client.iter_messages(&chat);
             while let Some(message) = iter.next().await? {
                 let text = message.text();
                 let has_media = message.media().is_some();
                 
-                // Only include messages with text or media (same filter as get_messages)
                 if !text.is_empty() || has_media {
                     messages_vec.push(message);
                     if messages_vec.len() >= 100 {
-                        break; // Limit to last 100 messages
+                        break;
                     }
                 }
             }
             messages_vec.reverse();
 
-            crate::log_info!("download_media: Fetched {} filtered messages (with text or media)", messages_vec.len());
-            crate::log_info!("download_media: Looking for message at index {} (msg_num - 1 = {})", message_num - 1, message_num - 1);
-
-            // Get message at position (message_num - 1)
             if let Some(message) = messages_vec.get((message_num - 1) as usize) {
-                crate::log_info!("download_media: Found message at position {}", message_num);
-                crate::log_info!("download_media: Message text: '{}'", message.text());
-                crate::log_info!("download_media: Message has_media: {}", message.media().is_some());
                 if let Some(media) = message.media() {
-                    crate::log_info!("download_media: Message has media!");
-                    
-                    // Determine file extension based on media type
                     use grammers_client::types::Media;
                     let ext = match &media {
-                        Media::Photo(_) => {
-                            crate::log_info!("download_media: Media type is Photo");
-                            "jpg"
-                        },
+                        Media::Photo(_) => "jpg",
                         Media::Document(doc) => {
                             if let Some(mime) = doc.mime_type() {
-                                crate::log_info!("download_media: Media type is Document with mime: {}", mime);
                                 if mime.starts_with("video/") {
                                     "mp4"
                                 } else if mime.starts_with("audio/") {
@@ -615,46 +562,30 @@ impl TelegramClient {
                                     "dat"
                                 }
                             } else {
-                                crate::log_info!("download_media: Media type is Document with no mime type");
                                 "dat"
                             }
                         }
-                        _ => {
-                            crate::log_info!("download_media: Media type is other");
-                            "dat"
-                        },
+                        _ => "dat",
                     };
 
                     let download_path = path.join(format!("telegram_msg_{}_{}.{}", chat_id, message_num, ext));
-                    crate::log_info!("download_media: Download path: {}", download_path.display());
-                    
-                    // Download media
                     use grammers_client::types::Downloadable;
-                    crate::log_info!("download_media: Starting download chunks...");
                     let mut download = client.iter_download(&Downloadable::Media(media));
                     let mut buf = Vec::new();
-                    let mut chunk_count = 0;
                     while let Some(chunk) = download.next().await? {
-                        chunk_count += 1;
                         buf.extend_from_slice(&chunk);
                     }
-                    crate::log_info!("download_media: Downloaded {} chunks, total size {} bytes", chunk_count, buf.len());
                     
                     std::fs::write(&download_path, &buf)?;
-                    crate::log_info!("download_media: Successfully wrote file to disk");
                     return Ok(download_path.to_string_lossy().to_string());
                 } else {
-                    crate::log_error!("download_media: Message #{} has no media", message_num);
                     anyhow::bail!("Message #{} has no media", message_num);
                 }
             } else {
-                crate::log_error!("download_media: Message #{} not found. Total messages: {}, requested index: {}", 
-                    message_num, messages_vec.len(), message_num - 1);
                 anyhow::bail!("Message #{} not found (have {} messages)", message_num, messages_vec.len());
             }
         }
 
-        crate::log_error!("download_media: Chat not found");
         anyhow::bail!("Chat not found")
     }
 
