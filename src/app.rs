@@ -1439,6 +1439,10 @@ impl App {
             self.muted_chat_ids.insert(chat_id);
             self.notify(&format!("Muted: {}", chat_name));
         }
+
+        if let Err(e) = self.save_state() {
+            self.notify(&format!("Failed to persist mute: {}", e));
+        }
     }
 
     fn chat_list_groups(&self) -> (Vec<usize>, Vec<usize>, Vec<usize>, Vec<usize>) {
