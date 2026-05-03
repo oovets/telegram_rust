@@ -39,16 +39,16 @@ Designed for people who live in panes, move quickly with shortcuts, and want mul
 ## TUI Layout (ASCII)
 
 ```text
-+-------------------- Chats --------------------+ +------------------ Pane 1 ------------------+ +-------- Preview --------+
-| Unread                                       | | Chat Header (name / username / typing)      | | Preview: image.png 120% |
-| ▶ (3) Team Alpha                             | |----------------------------------------------| |                        |
-| Active                                       | | #120 10:42 Alice: shipping now               | |      [ inline image ]  |
-| @bob                                         | | #121 10:43 You: ok                            | |                        |
-| Other                                        | |   ↳ Reply to Alice: looks good               | |                        |
-| Project Logs                                 | |                                              | |                        |
-| Muted                                        | |----------------------------------------------| |------------------------|
-| Release Bot                                  | | Input (Alt+Enter newline)                    | | Esc close, +/- zoom    |
-+----------------------------------------------+ +----------------------------------------------+ +------------------------+
++-------------------- Chats ---------+ +------------------ Pane 1 ------------------  + +------- Preview --------+
+| Unread                             | | Chat Header (name / username / typing)       | |   Preview: image.png   |
+| ▶ (3) Team Alpha                   | |----------------------------------------------| |                        |
+| Active                             | | #120 10:42 Alice: shipping now               | |      [ inline image ]  |
+| @bob                               | | #121 10:43 You: ok                           | |                        |
+| Other                              | |   ↳ Reply to Alice: looks good               | |                        |
+| Project Logs                       | |                                              | |                        |
+| Muted                              | |----------------------------------------------| |------------------------|
+| Release Bot                        | | Input (Alt+Enter newline)                    | | Esc close, +/- zoom    |
++------------------------------------+ +----------------------------------------------+ +------------------------+
 ```
 
 ## Keyboard Shortcuts
