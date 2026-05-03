@@ -11,6 +11,7 @@ Designed for people who live in panes, move quickly with shortcuts, and want mul
 - Rich message formatting (replies, reactions, media labels, aliases)
 - Persistent layout/settings between sessions
 - Kitty inline image preview with zoom + next/previous navigation
+- Lightweight footprint: ~10 MB RAM and <1% CPU at idle
 
 ## Feature Highlights
 
