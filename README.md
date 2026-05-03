@@ -3,6 +3,8 @@
 A fast, keyboard-first Telegram client built for terminal workflows.  
 Designed for people who live in panes, move quickly with shortcuts, and want multi-chat focus without leaving the shell.
 
+![Layout mockup](docs/screenshot.svg)
+
 ## Why This Client
 
 - Fast redraws and responsive input in a native TUI
