@@ -1,173 +1,124 @@
-# Telegram Client - Rust TUI
+# telegram_rust
 
-A fast, keyboard-first Telegram client built for terminal workflows.  
-Designed for people who live in panes, move quickly with shortcuts, and want multi-chat focus without leaving the shell.
+a fast, keyboard-first telegram client for terminal workflows. for people who live in
+panes, move quickly with shortcuts, and want multi-chat focus without leaving the shell.
 
-![Layout mockup](docs/screenshot.svg)
+![layout mockup](docs/screenshot.svg)
 
-## Why This Client
+```
+== why this client ==
 
-- Fast redraws and responsive input in a native TUI
-- Multi-pane chat workflow (split, focus, close, clear)
-- Strong keyboard ergonomics + mouse support
-- Rich message formatting (replies, reactions, media labels, aliases)
-- Persistent layout/settings between sessions
-- Kitty inline image preview with zoom + next/previous navigation
-- Lightweight footprint: ~10 MB RAM and <1% CPU at idle
-
-## Feature Highlights
-
-- **Split view system**
-  - Vertical/horizontal pane split
-  - Per-pane focus and per-pane input buffers
-  - Pane direction toggle and pane close
-- **Chat organization**
-  - Sidebar sections: `Unread`, `Active`, `Other`, `Muted`
-  - Mute/unmute chats (muted chats grouped under `Other`)
-  - Unread marker and optional unread counts
-- **Message UX**
-  - Reply mode with inline preview
-  - Search, media fetch/open, forward, edit, delete
-  - Sender aliases
-  - Optional reactions, emojis, timestamps, line numbers, compact mode
-- **Inline media preview (Kitty)**
-  - `/media N` opens image preview inline in Kitty
-  - `Esc` close preview
-  - `+/-` zoom
-  - `n/p` or `Right/Left` next/previous image in the current chat
-- **Persistence**
-  - Saves pane tree/layout, focused pane, muted chats
-  - Saves display settings and aliases
-
-## TUI Layout (ASCII)
-
-```text
-+-------------------- Chats ---------+ +------------------ Pane 1 ------------------  + +------- Preview --------+
-| Unread                             | | Chat Header (name / username / typing)       | |   Preview: image.png   |
-| ▶ (3) Team Alpha                   | |----------------------------------------------| |                        |
-| Active                             | | #120 10:42 Alice: shipping now               | |      [ inline image ]  |
-| @bob                               | | #121 10:43 You: ok                           | |                        |
-| Other                              | |   ↳ Reply to Alice: looks good               | |                        |
-| Project Logs                       | |                                              | |                        |
-| Muted                              | |----------------------------------------------| |------------------------|
-| Release Bot                        | | Input (Alt+Enter newline)                    | | Esc close, +/- zoom    |
-+------------------------------------+ +----------------------------------------------+ +------------------------+
+- fast redraws and responsive input in a native tui
+- multi-pane chat workflow (split, focus, close, clear)
+- strong keyboard ergonomics + mouse support
+- rich message formatting (replies, reactions, media labels, aliases)
+- persistent layout/settings between sessions
+- kitty inline image preview with zoom + next/previous navigation
+- lightweight footprint: ~10 MB RAM and <1% CPU at idle
 ```
 
-## Keyboard Shortcuts
+```
+== feature highlights ==
 
-### Global / Navigation
-- `Ctrl+Q`: Quit
-- `Ctrl+R`: Refresh chat list
-- `Tab` / `Shift+Tab`: Cycle focus
-- `Alt+Left/Right`: Focus previous/next pane
-- `Ctrl+Left/Right`: Resize sidebar width
-- `Up/Down`: Navigate chat list or input history
-- `Enter`: Open selected chat / send message
-- `Alt+Enter`: Insert newline in input
-- `Esc`: Cancel reply mode (or close inline preview)
+split view      vertical/horizontal split, per-pane focus + input buffers,
+                direction toggle, pane close
+chat org        sidebar sections unread / active / other / muted; mute/unmute
+                (muted grouped under other); unread marker + optional counts
+message ux      reply mode with inline preview; search, media fetch/open, forward,
+                edit, delete; sender aliases; optional reactions / emojis /
+                timestamps / line numbers / compact mode
+inline media    /media N opens image preview inline in kitty; esc close; +/- zoom;
+                n/p or right/left next/previous image in the chat
+persistence     saves pane tree/layout, focused pane, muted chats, display
+                settings and aliases
+```
 
-### Pane Management
-- `Ctrl+V`: Split vertical
-- `Ctrl+B`: Split horizontal
-- `Ctrl+K`: Toggle split direction
-- `Ctrl+W`: Close active pane
-- `Ctrl+L`: Clear active pane
-- `PageUp/PageDown`: Scroll messages
+```
+== tui layout ==
 
-### Display & Chat Controls
-- `Ctrl+E`: Toggle reactions
-- `Ctrl+N`: Toggle desktop notifications
-- `Ctrl+D`: Toggle compact mode
-- `Ctrl+O`: Toggle emojis
-- `Ctrl+G`: Toggle line numbers
-- `Ctrl+T`: Toggle timestamps
-- `Ctrl+S`: Toggle chat list
-- `Ctrl+M`: Toggle unread count
-- `Ctrl+P`: Mute/unmute selected chat
-- `Ctrl+Y`: Toggle borders
++--------- Chats ---------+ +----------- Pane 1 -----------+ +---- Preview ----+
+| Unread                  | | Chat Header (name / typing)  | |  Preview: img   |
+| ▶ (3) Team Alpha        | |------------------------------| |                 |
+| Active                  | | #120 10:42 Alice: shipping   | |  [ inline img ] |
+| @bob                    | | #121 10:43 You: ok           | |                 |
+| Other                   | |   ↳ Reply to Alice: looks ok | |                 |
+| Project Logs            | |------------------------------| |-----------------|
+| Muted                   | | Input (Alt+Enter newline)    | | Esc close +/- z |
++-------------------------+ +------------------------------+ +-----------------+
+```
 
-### Inline Preview (Kitty)
-- `Esc`: Close preview
-- `+` / `=`: Zoom in
-- `-`: Zoom out
-- `n` or `Right`: Next image
-- `p` or `Left`: Previous image
+```
+== keyboard shortcuts ==
 
-## Commands
+global / nav    Ctrl+Q quit · Ctrl+R refresh · Tab/Shift+Tab cycle focus ·
+                Alt+Left/Right prev/next pane · Ctrl+Left/Right resize sidebar ·
+                Up/Down navigate list or input history · Enter open chat / send ·
+                Alt+Enter newline · Esc cancel reply (or close inline preview)
+panes           Ctrl+V split vertical · Ctrl+B split horizontal · Ctrl+K toggle
+                direction · Ctrl+W close · Ctrl+L clear · PageUp/PageDown scroll
+display/chat    Ctrl+E reactions · Ctrl+N notifications · Ctrl+D compact ·
+                Ctrl+O emojis · Ctrl+G line numbers · Ctrl+T timestamps ·
+                Ctrl+S chat list · Ctrl+M unread count · Ctrl+P mute/unmute ·
+                Ctrl+Y borders
+inline preview  Esc close · + / = zoom in · - zoom out · n/Right next · p/Left prev
+```
 
-- `/reply <N>` or `/r <N>`: Reply to message #N
-- `/search <query>` or `/s <query>`: Search current chat
-- `/media <N>` or `/m <N>`: Download/open media from message #N
-  - In Kitty: inline preview for images
-- `/edit <N> <text>` or `/e <N> <text>`: Edit message #N
-- `/delete <N>` or `/d <N>`: Delete message #N
-- `/alias <N> <name>`: Alias sender of message #N
-- `/unalias <N>`: Remove alias for sender of message #N
-- `/filter <type|sender>`: Filter by media/sender/link
-- `/filter off`: Disable filter
-- `/new @username`: Open DM by username
-- `/newgroup <name>`: Create group
-- `/add @username`: Add user to current group
-- `/kick @username` or `/remove @username`: Remove user
-- `/members`: List current group members
-- `/forward <N> @username` or `/fwd <N> @username`: Forward message
+```
+== commands ==
 
-## Install & Run
+/reply <N>  (/r)          reply to message #N
+/search <q> (/s)          search current chat
+/media <N>  (/m)          download/open media from #N (kitty: inline image preview)
+/edit <N> <text> (/e)     edit message #N
+/delete <N> (/d)          delete message #N
+/alias <N> <name>         alias sender of message #N
+/unalias <N>              remove alias for sender of #N
+/filter <type|sender>     filter by media/sender/link · /filter off disables
+/new @username            open dm by username
+/newgroup <name>          create group
+/add @username            add user to current group
+/kick @username (/remove) remove user
+/members                  list current group members
+/forward <N> @user (/fwd) forward message
+```
 
 ```bash
+# install & run -- first run needs telegram api credentials from https://my.telegram.org
 cd telegram_client_rs
 cargo build --release
-./target/release/telegram_client_rs
-# or
-cargo run --release
+./target/release/telegram_client_rs   # or: cargo run --release
 ```
-
-First run requires Telegram API credentials from `https://my.telegram.org`.
-
-## Project Structure
 
 ```text
+== project structure ==
+
 src/
-  main.rs          Event loop, key/mouse input handling
-  app.rs           Main UI + state + pane/chat behavior
-  commands.rs      Slash commands
-  telegram.rs      Telegram API integration
-  split_view.rs    Pane tree and rendering split logic
-  formatting.rs    Message formatting and wrapping
-  persistence.rs   Layout/settings/aliases persistence
-  kitty_preview.rs Kitty graphics protocol rendering
-  utils.rs         Notifications, autocomplete, helpers
-  widgets.rs       Chat/message data structures
+  main.rs           event loop, key/mouse input handling
+  app.rs            main ui + state + pane/chat behavior
+  commands.rs       slash commands
+  telegram.rs       telegram api integration
+  split_view.rs     pane tree and rendering split logic
+  formatting.rs     message formatting and wrapping
+  persistence.rs    layout/settings/aliases persistence
+  kitty_preview.rs  kitty graphics protocol rendering
+  utils.rs          notifications, autocomplete, helpers
+  widgets.rs        chat/message data structures
 ```
-
-## Configuration Files
-
-### `telegram_config.json`
 
 ```json
-{
-  "api_id": 123456,
-  "api_hash": "your_hash_here"
-}
+// telegram_config.json (first run)
+{ "api_id": 123456, "api_hash": "your_hash_here" }
 ```
-
-### `telegram_aliases.json`
 
 ```json
-{
-  "123456789": "Alice",
-  "987654321": "Bob"
-}
+// telegram_aliases.json
+{ "123456789": "Alice", "987654321": "Bob" }
 ```
 
-### `telegram_layout.json`
-
-Saved automatically with pane layout, focused pane, and muted chat state.
-
-## Development
+telegram_layout.json is saved automatically with pane layout, focused pane, and muted chats.
 
 ```bash
+# development
 cargo build
 cargo test
 cargo check
