@@ -6,17 +6,23 @@
 a fast, keyboard-first telegram client for terminal workflows. for people who live in
 panes, move quickly with shortcuts, and want multi-chat focus without leaving the shell.
 
-![layout mockup](docs/screenshot.svg)
+!](docs/screenshot.svg)
 
 ```
 == why this client ==
 
 - fast redraws and responsive input in a native tui
+
 - multi-pane chat workflow (split, focus, close, clear)
+
 - strong keyboard ergonomics + mouse support
+
 - rich message formatting (replies, reactions, media labels, aliases)
+
 - persistent layout/settings between sessions
+
 - kitty inline image preview with zoom + next/previous navigation
+
 - lightweight footprint: ~10 MB RAM and <1% CPU at idle
 ```
 
@@ -25,13 +31,17 @@ panes, move quickly with shortcuts, and want multi-chat focus without leaving th
 
 split view      vertical/horizontal split, per-pane focus + input buffers,
                 direction toggle, pane close
+
 chat org        sidebar sections unread / active / other / muted; mute/unmute
                 (muted grouped under other); unread marker + optional counts
+
 message ux      reply mode with inline preview; search, media fetch/open, forward,
                 edit, delete; sender aliases; optional reactions / emojis /
                 timestamps / line numbers / compact mode
+
 inline media    /media N opens image preview inline in kitty; esc close; +/- zoom;
                 n/p or right/left next/previous image in the chat
+
 persistence     saves pane tree/layout, focused pane, muted chats, display
                 settings and aliases
 ```
@@ -57,12 +67,15 @@ global / nav    Ctrl+Q quit · Ctrl+R refresh · Tab/Shift+Tab cycle focus ·
                 Alt+Left/Right prev/next pane · Ctrl+Left/Right resize sidebar ·
                 Up/Down navigate list or input history · Enter open chat / send ·
                 Alt+Enter newline · Esc cancel reply (or close inline preview)
+
 panes           Ctrl+V split vertical · Ctrl+B split horizontal · Ctrl+K toggle
                 direction · Ctrl+W close · Ctrl+L clear · PageUp/PageDown scroll
+
 display/chat    Ctrl+E reactions · Ctrl+N notifications · Ctrl+D compact ·
                 Ctrl+O emojis · Ctrl+G line numbers · Ctrl+T timestamps ·
                 Ctrl+S chat list · Ctrl+M unread count · Ctrl+P mute/unmute ·
                 Ctrl+Y borders
+
 inline preview  Esc close · + / = zoom in · - zoom out · n/Right next · p/Left prev
 ```
 
