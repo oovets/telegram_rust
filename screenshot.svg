@@ -1,0 +1,162 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 640" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="13">
+  <style>
+    .bg     { fill: #11151c; }
+    .panel  { fill: #11151c; stroke: #2a313c; stroke-width: 1; }
+    .border { stroke: #2a313c; stroke-width: 1; fill: none; }
+    .focus  { stroke: #4ea3ff; stroke-width: 1; fill: none; }
+    .dim    { fill: #6c7480; }
+    .fg     { fill: #c9d1d9; }
+    .muted  { fill: #8b95a5; }
+    .blue   { fill: #4ea3ff; }
+    .green  { fill: #7bd88f; }
+    .yellow { fill: #e5c07b; }
+    .red    { fill: #f07178; }
+    .magenta{ fill: #c678dd; }
+    .cyan   { fill: #56b6c2; }
+    .me     { fill: #98c379; }
+    .header { fill: #8b95a5; font-weight: 600; letter-spacing: 0.5px; }
+    .titleb { font-weight: 600; }
+    .badge  { fill: #4ea3ff; }
+  </style>
+
+  <!-- terminal background -->
+  <rect class="bg" width="1200" height="640"/>
+
+  <!-- title bar -->
+  <rect x="0" y="0" width="1200" height="22" fill="#1b2129"/>
+  <circle cx="14" cy="11" r="5" fill="#f07178"/>
+  <circle cx="32" cy="11" r="5" fill="#e5c07b"/>
+  <circle cx="50" cy="11" r="5" fill="#7bd88f"/>
+  <text x="600" y="15" text-anchor="middle" class="dim">telegram — rust TUI client</text>
+
+  <!-- left: chat list -->
+  <rect class="panel" x="8" y="30" width="240" height="580"/>
+  <text x="20" y="50" class="header">CHATS</text>
+
+  <!-- Unread -->
+  <text x="20" y="74" class="muted">▾ Unread</text>
+  <text x="32" y="92"  class="fg">▶ (3) Team Alpha</text>
+  <text x="32" y="110" class="fg">  (1) @bob</text>
+  <text x="32" y="128" class="fg">  (12) Release Channel</text>
+
+  <!-- Active -->
+  <text x="20" y="156" class="muted">▾ Active</text>
+  <text x="32" y="174" class="fg">@alice</text>
+  <text x="32" y="192" class="fg">@carol</text>
+  <text x="32" y="210" class="fg">Design Group</text>
+
+  <!-- Other -->
+  <text x="20" y="238" class="muted">▾ Other</text>
+  <text x="32" y="256" class="fg">Project Logs</text>
+  <text x="32" y="274" class="fg">Family</text>
+  <text x="32" y="292" class="fg">Travel Plans</text>
+
+  <!-- Muted -->
+  <text x="20" y="320" class="muted">▾ Muted</text>
+  <text x="32" y="338" class="dim">Release Bot 🔕</text>
+  <text x="32" y="356" class="dim">CI Notifications 🔕</text>
+
+  <!-- chat list footer -->
+  <line class="border" x1="8" y1="582" x2="248" y2="582"/>
+  <text x="20" y="602" class="dim" font-size="11">Ctrl+P mute · Ctrl+M counts</text>
+
+  <!-- center: focused chat pane -->
+  <rect class="panel" x="256" y="30" width="600" height="580"/>
+  <rect class="focus" x="256.5" y="30.5" width="599" height="579"/>
+  <text x="270" y="50" class="blue titleb">Team Alpha</text>
+  <text x="406" y="50" class="dim">· @teamalpha · alice is typing…</text>
+  <text x="846" y="50" text-anchor="end" class="dim">128 msgs · live</text>
+
+  <!-- separator -->
+  <line class="border" x1="265" y1="62" x2="848" y2="62"/>
+
+  <!-- messages -->
+  <text x="270" y="86"  class="dim">#118</text>
+  <text x="306" y="86"  class="muted">10:39</text>
+  <text x="354" y="86"  class="cyan titleb">alice</text>
+  <text x="404" y="86"  class="fg">heads up — pushing a fix for the upload bug now</text>
+
+  <text x="270" y="108" class="dim">#119</text>
+  <text x="306" y="108" class="muted">10:40</text>
+  <text x="354" y="108" class="magenta titleb">bob</text>
+  <text x="396" y="108" class="fg">nice, I'll cover the rollout side</text>
+
+  <!-- reaction line -->
+  <text x="396" y="128" class="dim" font-size="11">👍 2  ❤ 1</text>
+
+  <text x="270" y="152" class="dim">#120</text>
+  <text x="306" y="152" class="muted">10:42</text>
+  <text x="354" y="152" class="cyan titleb">alice</text>
+  <text x="404" y="152" class="fg">shipping now — see attachment</text>
+
+  <!-- media label -->
+  <text x="404" y="172" class="green">[📷 image · upload-bug-fix.png]</text>
+
+  <text x="270" y="196" class="dim">#121</text>
+  <text x="306" y="196" class="muted">10:43</text>
+  <text x="354" y="196" class="me titleb">you</text>
+  <text x="388" y="196" class="fg">ok</text>
+
+  <!-- reply preview -->
+  <text x="316" y="216" class="dim">↳ reply to alice:</text>
+  <text x="450" y="216" class="muted" font-style="italic">"shipping now — see attachment"</text>
+  <text x="316" y="232" class="fg">looks good 🚀</text>
+
+  <text x="270" y="260" class="dim">#122</text>
+  <text x="306" y="260" class="muted">10:46</text>
+  <text x="354" y="260" class="magenta titleb">bob</text>
+  <text x="396" y="260" class="fg">deploy in progress, will ping when done</text>
+
+  <text x="270" y="282" class="dim">#123</text>
+  <text x="306" y="282" class="muted">10:48</text>
+  <text x="354" y="282" class="yellow titleb">carol</text>
+  <text x="404" y="282" class="fg">forwarded a thread from </text>
+  <text x="582" y="282" class="blue">#release-channel</text>
+  <text x="404" y="302" class="dim" font-style="italic">↪ "build #312 promoted to prod"</text>
+
+  <text x="270" y="330" class="dim">#124</text>
+  <text x="306" y="330" class="muted">10:51</text>
+  <text x="354" y="330" class="cyan titleb">alice</text>
+  <text x="404" y="330" class="fg">prod healthy, no errors yet</text>
+
+  <text x="270" y="352" class="dim">#125</text>
+  <text x="306" y="352" class="muted">10:52</text>
+  <text x="354" y="352" class="me titleb">you</text>
+  <text x="388" y="352" class="fg">🎉</text>
+
+  <!-- input area -->
+  <line class="border" x1="265" y1="558" x2="848" y2="558"/>
+  <text x="270" y="582" class="dim">↳ replying to alice (Esc cancel):</text>
+  <text x="270" y="602" class="fg">› looks good, going to test on my end now…</text>
+
+  <!-- right: inline preview pane -->
+  <rect class="panel" x="864" y="30" width="328" height="580"/>
+  <text x="876" y="50" class="blue titleb">Preview · upload-bug-fix.png</text>
+
+  <line class="border" x1="872" y1="62" x2="1184" y2="62"/>
+
+  <!-- "image" placeholder area -->
+  <rect x="884" y="78" width="296" height="380" rx="6" fill="#1b2129" stroke="#2a313c"/>
+  <!-- decorative shapes pretending to be a screenshot -->
+  <rect x="900" y="98" width="264" height="14" fill="#2a313c"/>
+  <rect x="900" y="124" width="180" height="10" fill="#2a313c"/>
+  <rect x="900" y="142" width="220" height="10" fill="#2a313c"/>
+  <rect x="900" y="160" width="160" height="10" fill="#2a313c"/>
+  <rect x="900" y="190" width="264" height="200" fill="#161b23" stroke="#2a313c"/>
+  <text x="1032" y="295" text-anchor="middle" class="muted" font-size="34">🖼</text>
+  <text x="1032" y="320" text-anchor="middle" class="dim" font-size="11">Kitty inline image</text>
+  <rect x="900" y="402" width="264" height="10" fill="#2a313c"/>
+  <rect x="900" y="420" width="180" height="10" fill="#2a313c"/>
+
+  <!-- preview metadata -->
+  <text x="876" y="486" class="muted">Size: 1024×768  ·  216 KB</text>
+  <text x="876" y="506" class="muted">Image 1 / 4 in this chat</text>
+
+  <!-- preview controls -->
+  <line class="border" x1="872" y1="558" x2="1184" y2="558"/>
+  <text x="876" y="582" class="dim">Esc close · +/- zoom · n/p next/prev</text>
+  <text x="876" y="602" class="dim">/media N to open another</text>
+
+  <!-- footer -->
+  <text x="14"  y="630" class="muted">Ctrl+Q quit · Ctrl+V/B split · Ctrl+W close pane · Ctrl+S sidebar · Tab focus</text>
+</svg>
