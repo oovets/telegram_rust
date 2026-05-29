@@ -1,5 +1,8 @@
 # telegram_rust
 
+[![Rust](https://img.shields.io/badge/rust-stable-DEA584.svg)](https://www.rust-lang.org/)
+[![Docs](https://img.shields.io/badge/docs-mkdocs--material-blue.svg)](https://stevoo.net/telegram_rust/)
+
 a fast, keyboard-first telegram client for terminal workflows. for people who live in
 panes, move quickly with shortcuts, and want multi-chat focus without leaving the shell.
 
