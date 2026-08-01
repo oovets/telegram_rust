@@ -1,4 +1,7 @@
 
+# rust build artifacts
+/target
+
 # mkdocs site build
 /site
 /docs/*.md

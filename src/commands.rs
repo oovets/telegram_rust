@@ -1,7 +1,6 @@
 use anyhow::Result;
 
-use crate::app::App;
-use crate::kitty_preview;
+use crate::app::{App, DeletePending};
 use crate::widgets::FilterType;
 
 pub struct Command {
@@ -102,6 +101,17 @@ impl CommandHandler {
         }
     }
 
+    /// Resolve a display number (#N) to the real Telegram message ID.
+    /// Returns the message id if found and it is a real (sent) message.
+    fn resolve_msg_id(app: &App, pane_idx: usize, msg_num: i32) -> Option<i32> {
+        let pane = app.panes.get(pane_idx)?;
+        let msg = pane.msg_data.get((msg_num - 1) as usize)?;
+        if msg.msg_id <= 0 {
+            return None;
+        }
+        Some(msg.msg_id)
+    }
+
     async fn handle_reply(app: &mut App, cmd: &Command, pane_idx: usize) -> Result<()> {
         if cmd.args.is_empty() {
             app.notify("Usage: /reply N [text]");
@@ -121,34 +131,48 @@ impl CommandHandler {
                 // Reply with inline text
                 let text = cmd.args[1..].join(" ");
                 if let Some(chat_id) = pane.chat_id {
-                    match app
-                        .telegram
-                        .reply_to_message(chat_id, msg_num, &text)
-                        .await
-                    {
-                        Ok(_) => pane.add_message(format!("✓ Replied to #{}", msg_num)),
-                        Err(e) => pane.add_message(format!("✗ Reply failed: {}", e)),
+                    match Self::resolve_msg_id(app, pane_idx, msg_num) {
+                        Some(msg_id) => {
+                            app.queue_reply_message(pane_idx, chat_id, msg_id, msg_num, text);
+                        }
+                        None => {
+                            app.notify_error(&format!(
+                                "Message #{} not found in current view",
+                                msg_num
+                            ));
+                        }
                     }
                 }
             } else {
                 // Set reply mode with preview - find actual message ID from msg_data
                 if let Some(msg_data) = pane.msg_data.get((msg_num - 1) as usize) {
                     let actual_msg_id = msg_data.msg_id;
+                    if actual_msg_id <= 0 {
+                        app.notify_error(&format!("Message #{} has not been sent yet", msg_num));
+                        return Ok(());
+                    }
                     pane.reply_to_message = Some(actual_msg_id);
-                    
+
                     // Get first line of message for preview (max 60 chars)
                     let first_line = msg_data.text.lines().next().unwrap_or(&msg_data.text);
                     let preview_text = if first_line.chars().count() > 60 {
-                        let truncate_at = first_line.char_indices().nth(60).map(|(i, _)| i).unwrap_or(first_line.len());
+                        let truncate_at = first_line
+                            .char_indices()
+                            .nth(60)
+                            .map(|(i, _)| i)
+                            .unwrap_or(first_line.len());
                         format!("{}...", &first_line[..truncate_at])
                     } else {
                         first_line.to_string()
                     };
-                    
+
                     pane.show_reply_preview(format!("Reply to #{}: {}", msg_num, preview_text));
-                    app.notify(&format!("Replying to message #{}. Type your reply.", msg_num));
+                    app.notify(&format!(
+                        "Replying to message #{}. Type your reply.",
+                        msg_num
+                    ));
                 } else {
-                    pane.add_message(format!("✗ Message #{} not found", msg_num));
+                    app.notify_error(&format!("Message #{} not found in current view", msg_num));
                 }
             }
         }
@@ -170,101 +194,30 @@ impl CommandHandler {
             }
         };
 
-        let (chat_id, telegram_msg_id) = if let Some(pane) = app.panes.get(pane_idx) {
-            if let Some(chat_id) = pane.chat_id {
-                if let Some(msg_data) = pane.msg_data.get((msg_num - 1) as usize) {
-                    (Some(chat_id), Some(msg_data.msg_id))
-                } else {
-                    app.notify(&format!("Message #{} not found", msg_num));
+        let (chat_id, msg_id) = if let Some(pane) = app.panes.get(pane_idx) {
+            match pane.chat_id {
+                Some(chat_id) => match Self::resolve_msg_id(app, pane_idx, msg_num) {
+                    Some(msg_id) => (Some(chat_id), Some(msg_id)),
+                    None => {
+                        app.notify_error(&format!(
+                            "Message #{} not found in current view",
+                            msg_num
+                        ));
+                        return Ok(());
+                    }
+                },
+                None => {
+                    app.notify_error("No chat selected");
                     return Ok(());
                 }
-            } else {
-                app.notify("No chat selected");
-                return Ok(());
             }
         } else {
-            app.notify("Pane not found");
             return Ok(());
         };
 
-        if let (Some(chat_id), Some(telegram_msg_id)) = (chat_id, telegram_msg_id) {
+        if let (Some(chat_id), Some(msg_id)) = (chat_id, msg_id) {
             app.notify(&format!("Downloading media from #{}...", msg_num));
-            let downloads_dir = std::env::temp_dir();
-
-            match app
-                .telegram
-                .download_media_by_id(chat_id, telegram_msg_id, &downloads_dir)
-                .await
-            {
-                Ok(path) => {
-                    let is_image = std::path::Path::new(&path)
-                        .extension()
-                        .and_then(|e| e.to_str())
-                        .map(|e| {
-                            matches!(
-                                e.to_ascii_lowercase().as_str(),
-                                "png" | "jpg" | "jpeg" | "webp" | "bmp" | "gif"
-                            )
-                        })
-                        .unwrap_or(false);
-
-                    if is_image && kitty_preview::supports_kitty_graphics() {
-                        let preview_path = if path.to_ascii_lowercase().ends_with(".png") {
-                            path.clone()
-                        } else {
-                            match image::open(&path) {
-                                Ok(img) => {
-                                    let png_path = std::env::temp_dir().join(format!(
-                                        "telegram_preview_{}_{}.png",
-                                        chat_id, telegram_msg_id
-                                    ));
-                                    if let Err(e) =
-                                        img.save_with_format(&png_path, image::ImageFormat::Png)
-                                    {
-                                        app.notify(&format!("Preview conversion failed: {}", e));
-                                        path.clone()
-                                    } else {
-                                        png_path.to_string_lossy().to_string()
-                                    }
-                                }
-                                Err(e) => {
-                                    app.notify(&format!("Preview decode failed: {}", e));
-                                    path.clone()
-                                }
-                            }
-                        };
-                        app.open_inline_preview_for_message(
-                            pane_idx,
-                            chat_id,
-                            telegram_msg_id,
-                            preview_path,
-                        );
-                        app.notify_with_duration("Inline preview opened (Esc to close)", 3);
-                    } else {
-                        #[cfg(target_os = "macos")]
-                        {
-                            let _ = std::process::Command::new("open").arg(&path).spawn();
-                        }
-                        #[cfg(target_os = "linux")]
-                        {
-                            let _ = std::process::Command::new("xdg-open").arg(&path).spawn();
-                        }
-                        app.notify_with_duration(
-                            &format!(
-                                "✓ {}",
-                                std::path::Path::new(&path)
-                                    .file_name()
-                                    .unwrap_or_default()
-                                    .to_string_lossy()
-                            ),
-                            3,
-                        );
-                    }
-                }
-                Err(e) => {
-                    app.notify(&format!("✗ {}", e));
-                }
-            }
+            app.queue_media_download(pane_idx, chat_id, msg_id, msg_num);
         }
 
         Ok(())
@@ -286,22 +239,21 @@ impl CommandHandler {
 
         let new_text = cmd.args[1..].join(" ");
 
-        if let Some(pane) = app.panes.get_mut(pane_idx) {
+        if let Some(pane) = app.panes.get(pane_idx) {
             if let Some(chat_id) = pane.chat_id {
-                match app
-                    .telegram
-                    .edit_message(chat_id, msg_num, &new_text)
-                    .await
-                {
-                    Ok(_) => {
-                        pane.add_message(format!("✓ Edited message #{}", msg_num));
-                        app.notify("Message edited");
+                match Self::resolve_msg_id(app, pane_idx, msg_num) {
+                    Some(msg_id) => {
+                        app.queue_edit_message(pane_idx, chat_id, msg_id, msg_num, new_text);
                     }
-                    Err(e) => {
-                        pane.add_message(format!("✗ Edit failed: {}", e));
-                        app.notify(&format!("Edit failed: {}", e));
+                    None => {
+                        app.notify_error(&format!(
+                            "Message #{} not found in current view",
+                            msg_num
+                        ));
                     }
                 }
+            } else {
+                app.notify_error("No chat selected");
             }
         }
 
@@ -322,18 +274,28 @@ impl CommandHandler {
             }
         };
 
-        if let Some(pane) = app.panes.get_mut(pane_idx) {
+        if let Some(pane) = app.panes.get(pane_idx) {
             if let Some(chat_id) = pane.chat_id {
-                match app.telegram.delete_message(chat_id, msg_num).await {
-                    Ok(_) => {
-                        pane.add_message(format!("✓ Deleted message #{}", msg_num));
-                        app.notify("Message deleted");
+                match Self::resolve_msg_id(app, pane_idx, msg_num) {
+                    Some(msg_id) => {
+                        app.pending_delete = Some(DeletePending {
+                            pane_idx,
+                            chat_id,
+                            chat_name: pane.chat_name.clone(),
+                            msg_num,
+                            actual_msg_id: msg_id,
+                        });
+                        app.notify_with_duration(&format!("Delete #{}? [y]es / [n]o", msg_num), 10);
                     }
-                    Err(e) => {
-                        pane.add_message(format!("✗ Delete failed: {}", e));
-                        app.notify(&format!("Delete failed: {}", e));
+                    None => {
+                        app.notify_error(&format!(
+                            "Message #{} not found in current view",
+                            msg_num
+                        ));
                     }
                 }
+            } else {
+                app.notify_error("No chat selected");
             }
         }
 
@@ -356,21 +318,21 @@ impl CommandHandler {
 
         let alias = cmd.args[1..].join(" ");
 
-        if let Some(pane) = app.panes.get_mut(pane_idx) {
+        if let Some(pane) = app.panes.get(pane_idx) {
             if let Some(chat_id) = pane.chat_id {
-                let sender_id = app
-                    .telegram
-                    .get_message_sender(chat_id, msg_num)
-                    .await?;
-                if let Some(sender_id) = sender_id {
-                    app.aliases.insert(sender_id, alias.clone());
-                    app.aliases.save(&app.config)?;
-                    pane.add_message(format!("✓ Alias set: {}", alias));
-                    app.notify(&format!("Alias set: {}", alias));
-                } else {
-                    pane.add_message("✗ Could not find message sender".to_string());
-                    app.notify("Could not find message sender");
+                match Self::resolve_msg_id(app, pane_idx, msg_num) {
+                    Some(msg_id) => {
+                        app.queue_resolve_sender(pane_idx, chat_id, msg_id, Some(alias));
+                    }
+                    None => {
+                        app.notify_error(&format!(
+                            "Message #{} not found in current view",
+                            msg_num
+                        ));
+                    }
                 }
+            } else {
+                app.notify_error("No chat selected");
             }
         }
 
@@ -391,25 +353,21 @@ impl CommandHandler {
             }
         };
 
-        if let Some(pane) = app.panes.get_mut(pane_idx) {
+        if let Some(pane) = app.panes.get(pane_idx) {
             if let Some(chat_id) = pane.chat_id {
-                let sender_id = app
-                    .telegram
-                    .get_message_sender(chat_id, msg_num)
-                    .await?;
-                if let Some(sender_id) = sender_id {
-                    if app.aliases.remove(&sender_id).is_some() {
-                        app.aliases.save(&app.config)?;
-                        pane.add_message("✓ Alias removed".to_string());
-                        app.notify("Alias removed");
-                    } else {
-                        pane.add_message("✗ No alias found".to_string());
-                        app.notify("No alias set for this user");
+                match Self::resolve_msg_id(app, pane_idx, msg_num) {
+                    Some(msg_id) => {
+                        app.queue_resolve_sender(pane_idx, chat_id, msg_id, None);
                     }
-                } else {
-                    pane.add_message("✗ Could not find message sender".to_string());
-                    app.notify("Could not find message sender");
+                    None => {
+                        app.notify_error(&format!(
+                            "Message #{} not found in current view",
+                            msg_num
+                        ));
+                    }
                 }
+            } else {
+                app.notify_error("No chat selected");
             }
         }
 
@@ -497,70 +455,27 @@ impl CommandHandler {
 
     async fn handle_search(app: &mut App, cmd: &Command, pane_idx: usize) -> Result<()> {
         if cmd.args.is_empty() {
-            app.notify("Usage: /search <query> or /s <query>");
+            app.notify("Usage: /search <query> or /s <query>  ·  /search off clears");
+            return Ok(());
+        }
+
+        // /search off | /search clear exits search mode and restores the chat
+        if cmd.args[0] == "off" || cmd.args[0] == "clear" {
+            app.restore_search(pane_idx);
             return Ok(());
         }
 
         let query = cmd.args.join(" ");
 
-        if let Some(pane) = app.panes.get(pane_idx) {
-            if pane.chat_id.is_none() {
-                app.notify("Select a chat first");
-                return Ok(());
-            }
+        if app.panes.get(pane_idx).is_some_and(|p| p.chat_id.is_none()) {
+            app.notify_error("Select a chat first");
+            return Ok(());
         }
 
         let chat_id = app.panes.get(pane_idx).and_then(|p| p.chat_id);
         if let Some(chat_id) = chat_id {
             app.notify(&format!("Searching for '{}'...", query));
-
-            match app.telegram.search_messages(chat_id, &query, 100).await {
-                Ok(results) => {
-                    let count = results.len();
-                    if count == 0 {
-                        app.notify("No results found");
-                    } else {
-                        // Convert to MessageData for proper formatting support
-                        let msg_data: Vec<crate::widgets::MessageData> = results
-                            .iter()
-                            .map(|(msg_id, sender_id, sender_name, text, reply_to_id, reactions)| {
-                                let reply_to_msg_id = *reply_to_id;
-                                
-                                crate::widgets::MessageData {
-                                    msg_id: *msg_id,
-                                    sender_id: *sender_id,
-                                    sender_name: sender_name.clone(),
-                                    text: text.clone(),
-                                    is_outgoing: *sender_id == app.my_user_id,
-                                    timestamp: chrono::Utc::now().timestamp(),
-                                    media_type: None,
-                                    media_label: None,
-                                    reactions: reactions.clone(),
-                                    reply_to_msg_id,
-                                    reply_sender: None,
-                                    reply_text: None,
-                                }
-                            })
-                            .collect();
-
-                        if let Some(pane) = app.panes.get_mut(pane_idx) {
-                            pane.msg_data = msg_data;
-                            // Don't clear messages - they may contain status messages
-                            pane.chat_name = format!(
-                                "{} | Search: '{}' ({} results)",
-                                pane.chat_name.split(" | Search:").next().unwrap_or(&pane.chat_name),
-                                query,
-                                count
-                            );
-                            pane.scroll_offset = 0;
-                        }
-                        app.notify(&format!("Found {} results", count));
-                    }
-                }
-                Err(e) => {
-                    app.notify(&format!("Search failed: {}", e));
-                }
-            }
+            app.queue_search(pane_idx, chat_id, query);
         }
 
         Ok(())
@@ -572,20 +487,9 @@ impl CommandHandler {
             return Ok(());
         }
 
-        let username = &cmd.args[0];
+        let username = cmd.args[0].clone();
         app.notify(&format!("Looking up {}...", username));
-
-        match app.telegram.resolve_username(username).await {
-            Ok(Some((chat_id, chat_name, _is_group))) => {
-                app.open_chat_in_pane(pane_idx, chat_id, &chat_name).await;
-            }
-            Ok(None) => {
-                app.notify(&format!("User '{}' not found", username));
-            }
-            Err(e) => {
-                app.notify(&format!("Lookup failed: {}", e));
-            }
-        }
+        app.queue_resolve_and_open(pane_idx, username);
 
         Ok(())
     }
@@ -598,18 +502,7 @@ impl CommandHandler {
 
         let group_name = cmd.args.join(" ");
         app.notify(&format!("Creating group '{}'...", group_name));
-
-        match app.telegram.create_group(&group_name, vec![]).await {
-            Ok(chat_id) => {
-                // Refresh chat list and open the new group
-                let _ = app.refresh_chats().await;
-                app.open_chat_in_pane(pane_idx, chat_id, &group_name).await;
-                app.notify(&format!("Group '{}' created", group_name));
-            }
-            Err(e) => {
-                app.notify(&format!("Failed to create group: {}", e));
-            }
-        }
+        app.queue_create_group(pane_idx, group_name);
 
         Ok(())
     }
@@ -620,12 +513,12 @@ impl CommandHandler {
             return Ok(());
         }
 
-        let username = &cmd.args[0];
+        let username = cmd.args[0].clone();
         let chat_id = if let Some(pane) = app.panes.get(pane_idx) {
             match pane.chat_id {
                 Some(id) => id,
                 None => {
-                    app.notify("Open a group chat first");
+                    app.notify_error("Open a group chat first");
                     return Ok(());
                 }
             }
@@ -634,38 +527,23 @@ impl CommandHandler {
         };
 
         app.notify(&format!("Adding {}...", username));
-
-        match app.telegram.add_member(chat_id, username).await {
-            Ok(_) => {
-                if let Some(pane) = app.panes.get_mut(pane_idx) {
-                    pane.add_message(format!("✓ Added {} to group", username));
-                }
-                app.notify(&format!("{} added to group", username));
-            }
-            Err(e) => {
-                app.notify(&format!("Failed to add {}: {}", username, e));
-            }
-        }
+        app.queue_add_remove(pane_idx, "add".to_string(), username, chat_id);
 
         Ok(())
     }
 
-    async fn handle_remove_member(
-        app: &mut App,
-        cmd: &Command,
-        pane_idx: usize,
-    ) -> Result<()> {
+    async fn handle_remove_member(app: &mut App, cmd: &Command, pane_idx: usize) -> Result<()> {
         if cmd.args.is_empty() {
             app.notify("Usage: /kick @username or /remove @username");
             return Ok(());
         }
 
-        let username = &cmd.args[0];
+        let username = cmd.args[0].clone();
         let chat_id = if let Some(pane) = app.panes.get(pane_idx) {
             match pane.chat_id {
                 Some(id) => id,
                 None => {
-                    app.notify("Open a group chat first");
+                    app.notify_error("Open a group chat first");
                     return Ok(());
                 }
             }
@@ -674,18 +552,7 @@ impl CommandHandler {
         };
 
         app.notify(&format!("Removing {}...", username));
-
-        match app.telegram.remove_member(chat_id, username).await {
-            Ok(_) => {
-                if let Some(pane) = app.panes.get_mut(pane_idx) {
-                    pane.add_message(format!("✓ Removed {} from group", username));
-                }
-                app.notify(&format!("{} removed from group", username));
-            }
-            Err(e) => {
-                app.notify(&format!("Failed to remove {}: {}", username, e));
-            }
-        }
+        app.queue_add_remove(pane_idx, "remove".to_string(), username, chat_id);
 
         Ok(())
     }
@@ -695,7 +562,7 @@ impl CommandHandler {
             match pane.chat_id {
                 Some(id) => id,
                 None => {
-                    app.notify("Open a group chat first");
+                    app.notify_error("Open a group chat first");
                     return Ok(());
                 }
             }
@@ -704,22 +571,7 @@ impl CommandHandler {
         };
 
         app.notify("Loading members...");
-
-        match app.telegram.get_members(chat_id).await {
-            Ok(members) => {
-                if let Some(pane) = app.panes.get_mut(pane_idx) {
-                    pane.add_message(format!("--- Members ({}) ---", members.len()));
-                    for (id, name, role) in &members {
-                        pane.add_message(format!("  {} (id:{}) - {}", name, id, role));
-                    }
-                    pane.add_message("---".to_string());
-                }
-                app.notify(&format!("{} members", members.len()));
-            }
-            Err(e) => {
-                app.notify(&format!("Failed to load members: {}", e));
-            }
-        }
+        app.queue_members(pane_idx, chat_id);
 
         Ok(())
     }
@@ -738,52 +590,25 @@ impl CommandHandler {
             }
         };
 
-        let target = &cmd.args[1];
+        let target = cmd.args[1].clone();
 
-        let (from_chat_id, message_id) = if let Some(pane) = app.panes.get(pane_idx) {
-            let from_id = match pane.chat_id {
+        if let Some(pane) = app.panes.get(pane_idx) {
+            let from_chat_id = match pane.chat_id {
                 Some(id) => id,
                 None => {
-                    app.notify("No chat selected");
+                    app.notify_error("No chat selected");
                     return Ok(());
                 }
             };
-            // Get actual telegram message ID from msg_data
-            let msg_id = match pane.msg_data.get((msg_num - 1) as usize) {
-                Some(msg) => msg.msg_id,
+            let message_id = match Self::resolve_msg_id(app, pane_idx, msg_num) {
+                Some(id) => id,
                 None => {
-                    app.notify(&format!("Message #{} not found", msg_num));
+                    app.notify_error(&format!("Message #{} not found in current view", msg_num));
                     return Ok(());
                 }
             };
-            (from_id, msg_id)
-        } else {
-            return Ok(());
-        };
-
-        app.notify(&format!("Forwarding #{} to {}...", msg_num, target));
-
-        // Resolve target
-        match app.telegram.resolve_username(target).await {
-            Ok(Some((to_chat_id, _name, _is_group))) => {
-                match app.telegram.forward_message(from_chat_id, message_id, to_chat_id).await {
-                    Ok(_) => {
-                        if let Some(pane) = app.panes.get_mut(pane_idx) {
-                            pane.add_message(format!("✓ Forwarded #{} to {}", msg_num, target));
-                        }
-                        app.notify(&format!("Forwarded to {}", target));
-                    }
-                    Err(e) => {
-                        app.notify(&format!("Forward failed: {}", e));
-                    }
-                }
-            }
-            Ok(None) => {
-                app.notify(&format!("User '{}' not found", target));
-            }
-            Err(e) => {
-                app.notify(&format!("Lookup failed: {}", e));
-            }
+            app.notify(&format!("Forwarding #{} to {}...", msg_num, target));
+            app.queue_forward(pane_idx, msg_num, target, from_chat_id, message_id);
         }
 
         Ok(())

@@ -129,25 +129,25 @@ pub struct AppState {
 pub struct AppSettings {
     #[serde(default = "default_true")]
     pub show_reactions: bool,
-    
+
     #[serde(default = "default_true")]
     pub show_notifications: bool,
-    
+
     #[serde(default)]
     pub compact_mode: bool,
-    
+
     #[serde(default = "default_true")]
     pub show_emojis: bool,
-    
+
     #[serde(default)]
     pub show_line_numbers: bool,
-    
+
     #[serde(default = "default_true")]
     pub show_timestamps: bool,
-    
+
     #[serde(default = "default_true")]
     pub show_user_colors: bool,
-    
+
     #[serde(default = "default_true")]
     pub show_borders: bool,
 

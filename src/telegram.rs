@@ -6,6 +6,7 @@ use tokio::sync::Mutex;
 
 use crate::app::ChatInfo;
 use crate::config::Config;
+use crate::widgets::{RawMessage, RawSearchMessage};
 
 /// Updates received from Telegram
 pub enum TelegramUpdate {
@@ -16,10 +17,7 @@ pub enum TelegramUpdate {
         is_outgoing: bool,
     },
     #[allow(dead_code)]
-    UserTyping {
-        chat_id: i64,
-        user_name: String,
-    },
+    UserTyping { chat_id: i64, user_name: String },
 }
 
 #[derive(Clone)]
@@ -94,9 +92,7 @@ impl TelegramClient {
                 io::stdin().read_line(&mut password)?;
                 let password = password.trim();
 
-                client
-                    .check_password(password_token, password)
-                    .await?;
+                client.check_password(password_token, password).await?;
             }
             Err(e) => return Err(e.into()),
         }
@@ -126,19 +122,16 @@ impl TelegramClient {
 
             // Extract username
             let username = match chat {
-                grammers_client::types::Chat::User(u) => {
-                    u.username().map(|u| format!("@{}", u))
-                }
-                grammers_client::types::Chat::Channel(c) => {
-                    c.username().map(|u| format!("@{}", u))
-                }
+                grammers_client::types::Chat::User(u) => u.username().map(|u| format!("@{}", u)),
+                grammers_client::types::Chat::Channel(c) => c.username().map(|u| format!("@{}", u)),
                 _ => None,
             };
 
             // Get chat name with fallback for empty names
             let chat_name = chat.name().to_string();
             let display_name = if chat_name.trim().is_empty() {
-                username.as_ref()
+                username
+                    .as_ref()
                     .map(|u| u.to_string())
                     .unwrap_or_else(|| format!("Chat {}", chat.id()))
             } else {
@@ -150,7 +143,9 @@ impl TelegramClient {
                 name: display_name,
                 username,
                 unread: match &dialog.raw {
-                    grammers_client::grammers_tl_types::enums::Dialog::Dialog(d) => d.unread_count as u32,
+                    grammers_client::grammers_tl_types::enums::Dialog::Dialog(d) => {
+                        d.unread_count as u32
+                    }
                     _ => 0,
                 },
                 _is_channel: chat_type.0,
@@ -161,11 +156,7 @@ impl TelegramClient {
         Ok(chats)
     }
 
-    pub async fn get_messages(
-        &self,
-        chat_id: i64,
-        limit: usize,
-    ) -> Result<Vec<(i32, i64, String, String, Option<i32>, Option<String>, std::collections::HashMap<String, u32>)>> {
+    pub async fn get_messages(&self, chat_id: i64, limit: usize) -> Result<Vec<RawMessage>> {
         let client = self.client.lock().await;
 
         let chat = match self.find_chat_inner(&client, chat_id).await? {
@@ -273,12 +264,7 @@ impl TelegramClient {
         Ok(())
     }
 
-    pub async fn reply_to_message(
-        &self,
-        chat_id: i64,
-        message_id: i32,
-        text: &str,
-    ) -> Result<()> {
+    pub async fn reply_to_message(&self, chat_id: i64, message_id: i32, text: &str) -> Result<()> {
         let client = self.client.lock().await;
         let chat = self.find_chat_inner(&client, chat_id).await?;
 
@@ -291,12 +277,7 @@ impl TelegramClient {
         Ok(())
     }
 
-    pub async fn edit_message(
-        &self,
-        chat_id: i64,
-        message_id: i32,
-        new_text: &str,
-    ) -> Result<()> {
+    pub async fn edit_message(&self, chat_id: i64, message_id: i32, new_text: &str) -> Result<()> {
         let client = self.client.lock().await;
         let chat = self.find_chat_inner(&client, chat_id).await?;
 
@@ -334,7 +315,8 @@ impl TelegramClient {
             Some(chat) => {
                 let is_group = matches!(
                     chat,
-                    grammers_client::types::Chat::Group(_) | grammers_client::types::Chat::Channel(_)
+                    grammers_client::types::Chat::Group(_)
+                        | grammers_client::types::Chat::Channel(_)
                 );
                 Ok(Some((chat.id(), chat.name().to_string(), is_group)))
             }
@@ -356,11 +338,13 @@ impl TelegramClient {
             }
         }
 
-        let result = client.invoke(&grammers_tl_types::functions::messages::CreateChat {
-            users: input_users,
-            title: title.to_string(),
-            ttl_period: None,
-        }).await?;
+        let result = client
+            .invoke(&grammers_tl_types::functions::messages::CreateChat {
+                users: input_users,
+                title: title.to_string(),
+                ttl_period: None,
+            })
+            .await?;
 
         // Extract chat ID from the result
         use grammers_tl_types::enums::messages::InvitedUsers;
@@ -388,27 +372,36 @@ impl TelegramClient {
     pub async fn add_member(&self, chat_id: i64, username: &str) -> Result<()> {
         let username = username.trim_start_matches('@');
         let client = self.client.lock().await;
-        let chat = self.find_chat_inner(&client, chat_id).await?
+        let chat = self
+            .find_chat_inner(&client, chat_id)
+            .await?
             .ok_or_else(|| anyhow::anyhow!("Chat not found"))?;
-        let user_chat = client.resolve_username(username).await?
+        let user_chat = client
+            .resolve_username(username)
+            .await?
             .ok_or_else(|| anyhow::anyhow!("User '{}' not found", username))?;
 
         let user_packed = user_chat.pack();
-        let input_user = user_packed.try_to_input_user()
+        let input_user = user_packed
+            .try_to_input_user()
             .ok_or_else(|| anyhow::anyhow!("Cannot convert to input user"))?;
 
         let chat_packed = chat.pack();
         if let Some(channel) = chat_packed.try_to_input_channel() {
-            client.invoke(&grammers_tl_types::functions::channels::InviteToChannel {
-                channel,
-                users: vec![input_user],
-            }).await?;
+            client
+                .invoke(&grammers_tl_types::functions::channels::InviteToChannel {
+                    channel,
+                    users: vec![input_user],
+                })
+                .await?;
         } else if let Some(chat_id_inner) = chat_packed.try_to_chat_id() {
-            client.invoke(&grammers_tl_types::functions::messages::AddChatUser {
-                chat_id: chat_id_inner,
-                user_id: input_user,
-                fwd_limit: 100,
-            }).await?;
+            client
+                .invoke(&grammers_tl_types::functions::messages::AddChatUser {
+                    chat_id: chat_id_inner,
+                    user_id: input_user,
+                    fwd_limit: 100,
+                })
+                .await?;
         } else {
             anyhow::bail!("Cannot add members to this chat type");
         }
@@ -419,9 +412,13 @@ impl TelegramClient {
     pub async fn remove_member(&self, chat_id: i64, username: &str) -> Result<()> {
         let username = username.trim_start_matches('@');
         let client = self.client.lock().await;
-        let chat = self.find_chat_inner(&client, chat_id).await?
+        let chat = self
+            .find_chat_inner(&client, chat_id)
+            .await?
             .ok_or_else(|| anyhow::anyhow!("Chat not found"))?;
-        let user_chat = client.resolve_username(username).await?
+        let user_chat = client
+            .resolve_username(username)
+            .await?
             .ok_or_else(|| anyhow::anyhow!("User '{}' not found", username))?;
 
         client.kick_participant(&chat, &user_chat).await?;
@@ -430,7 +427,9 @@ impl TelegramClient {
 
     pub async fn get_members(&self, chat_id: i64) -> Result<Vec<(i64, String, String)>> {
         let client = self.client.lock().await;
-        let chat = self.find_chat_inner(&client, chat_id).await?
+        let chat = self
+            .find_chat_inner(&client, chat_id)
+            .await?
             .ok_or_else(|| anyhow::anyhow!("Chat not found"))?;
 
         let mut members = Vec::new();
@@ -455,9 +454,7 @@ impl TelegramClient {
         let to_chat = self.find_chat_inner(&client, to_chat_id).await?;
 
         if let (Some(from), Some(to)) = (from_chat, to_chat) {
-            client
-                .forward_messages(&to, &[message_id], &from)
-                .await?;
+            client.forward_messages(&to, &[message_id], &from).await?;
         }
 
         Ok(())
@@ -474,42 +471,43 @@ impl TelegramClient {
 
         if let Some(chat) = chat {
             let messages = client.get_messages_by_id(&chat, &[message_id]).await?;
-            
+
             if let Some(message) = messages.into_iter().next() {
                 if let Some(message) = message {
                     if let Some(media) = message.media() {
-                    use grammers_client::types::Media;
-                    let ext = match &media {
-                        Media::Photo(_) => "jpg",
-                        Media::Document(doc) => {
-                            if let Some(mime) = doc.mime_type() {
-                                if mime.starts_with("video/") {
-                                    "mp4"
-                                } else if mime.starts_with("audio/") {
-                                    "mp3"
+                        use grammers_client::types::Media;
+                        let ext = match &media {
+                            Media::Photo(_) => "jpg",
+                            Media::Document(doc) => {
+                                if let Some(mime) = doc.mime_type() {
+                                    if mime.starts_with("video/") {
+                                        "mp4"
+                                    } else if mime.starts_with("audio/") {
+                                        "mp3"
+                                    } else {
+                                        "dat"
+                                    }
                                 } else {
                                     "dat"
                                 }
-                            } else {
-                                "dat"
                             }
-                        }
-                        _ => "dat",
-                    };
+                            _ => "dat",
+                        };
 
-                    let download_path = path.join(format!("telegram_msg_{}_{}.{}", chat_id, message_id, ext));
-                    use grammers_client::types::Downloadable;
-                    let mut download = client.iter_download(&Downloadable::Media(media));
-                    let mut buf = Vec::new();
-                    while let Some(chunk) = download.next().await? {
-                        buf.extend_from_slice(&chunk);
+                        let download_path =
+                            path.join(format!("telegram_msg_{}_{}.{}", chat_id, message_id, ext));
+                        use grammers_client::types::Downloadable;
+                        let mut download = client.iter_download(&Downloadable::Media(media));
+                        let mut buf = Vec::new();
+                        while let Some(chunk) = download.next().await? {
+                            buf.extend_from_slice(&chunk);
+                        }
+
+                        std::fs::write(&download_path, &buf)?;
+                        return Ok(download_path.to_string_lossy().to_string());
+                    } else {
+                        anyhow::bail!("Message has no media");
                     }
-                    
-                    std::fs::write(&download_path, &buf)?;
-                    return Ok(download_path.to_string_lossy().to_string());
-                } else {
-                    anyhow::bail!("Message has no media");
-                }
                 } else {
                     anyhow::bail!("Message not found");
                 }
@@ -537,7 +535,7 @@ impl TelegramClient {
             while let Some(message) = iter.next().await? {
                 let text = message.text();
                 let has_media = message.media().is_some();
-                
+
                 if !text.is_empty() || has_media {
                     messages_vec.push(message);
                     if messages_vec.len() >= 100 {
@@ -568,21 +566,26 @@ impl TelegramClient {
                         _ => "dat",
                     };
 
-                    let download_path = path.join(format!("telegram_msg_{}_{}.{}", chat_id, message_num, ext));
+                    let download_path =
+                        path.join(format!("telegram_msg_{}_{}.{}", chat_id, message_num, ext));
                     use grammers_client::types::Downloadable;
                     let mut download = client.iter_download(&Downloadable::Media(media));
                     let mut buf = Vec::new();
                     while let Some(chunk) = download.next().await? {
                         buf.extend_from_slice(&chunk);
                     }
-                    
+
                     std::fs::write(&download_path, &buf)?;
                     return Ok(download_path.to_string_lossy().to_string());
                 } else {
                     anyhow::bail!("Message #{} has no media", message_num);
                 }
             } else {
-                anyhow::bail!("Message #{} not found (have {} messages)", message_num, messages_vec.len());
+                anyhow::bail!(
+                    "Message #{} not found (have {} messages)",
+                    message_num,
+                    messages_vec.len()
+                );
             }
         }
 
@@ -594,7 +597,7 @@ impl TelegramClient {
         chat_id: i64,
         query: &str,
         limit: usize,
-    ) -> Result<Vec<(i32, i64, String, String, Option<i32>, std::collections::HashMap<String, u32>)>> {
+    ) -> Result<Vec<RawSearchMessage>> {
         let client = self.client.lock().await;
         let chat = self.find_chat_inner(&client, chat_id).await?;
 
@@ -639,7 +642,14 @@ impl TelegramClient {
                 }
 
                 if !text.is_empty() {
-                    messages.push((message.id(), sender_id, sender_name, text.to_string(), reply_to_id, reactions));
+                    messages.push((
+                        message.id(),
+                        sender_id,
+                        sender_name,
+                        text.to_string(),
+                        reply_to_id,
+                        reactions,
+                    ));
                 }
                 count += 1;
             }
@@ -651,11 +661,7 @@ impl TelegramClient {
         Ok(Vec::new())
     }
 
-    pub async fn get_message_sender(
-        &self,
-        chat_id: i64,
-        message_id: i32,
-    ) -> Result<Option<i64>> {
+    pub async fn get_message_sender(&self, chat_id: i64, message_id: i32) -> Result<Option<i64>> {
         let client = self.client.lock().await;
         let chat = self.find_chat_inner(&client, chat_id).await?;
 
@@ -691,10 +697,7 @@ impl TelegramClient {
     }
 
     /// Find a chat by ID (public API, acquires lock)
-    pub async fn _find_chat(
-        &self,
-        chat_id: i64,
-    ) -> Result<Option<grammers_client::types::Chat>> {
+    pub async fn _find_chat(&self, chat_id: i64) -> Result<Option<grammers_client::types::Chat>> {
         let client = self.client.lock().await;
         self.find_chat_inner(&client, chat_id).await
     }
@@ -721,43 +724,41 @@ impl TelegramClient {
                     )
                     .await
                     {
-                        Ok(Ok(update)) => {
-                            match update {
-                                Update::NewMessage(msg) if !msg.outgoing() => {
-                                    let chat_id = msg.chat().id();
-                                    let sender_name = msg
-                                        .sender()
-                                        .map(|s| s.name().to_string())
-                                        .unwrap_or_else(|| "Unknown".to_string());
-                                    let text = msg.text().to_string();
+                        Ok(Ok(update)) => match update {
+                            Update::NewMessage(msg) if !msg.outgoing() => {
+                                let chat_id = msg.chat().id();
+                                let sender_name = msg
+                                    .sender()
+                                    .map(|s| s.name().to_string())
+                                    .unwrap_or_else(|| "Unknown".to_string());
+                                let text = msg.text().to_string();
 
-                                    drop(client_lock);
-                                    let mut pending = updates.lock().await;
-                                    pending.push(TelegramUpdate::NewMessage {
-                                        chat_id,
-                                        _sender_name: sender_name,
-                                        text,
-                                        is_outgoing: false,
-                                    });
-                                }
-                                Update::NewMessage(msg) if msg.outgoing() => {
-                                    let chat_id = msg.chat().id();
-                                    let text = msg.text().to_string();
-
-                                    drop(client_lock);
-                                    let mut pending = updates.lock().await;
-                                    pending.push(TelegramUpdate::NewMessage {
-                                        chat_id,
-                                        _sender_name: "You".to_string(),
-                                        text,
-                                        is_outgoing: true,
-                                    });
-                                }
-                                _ => {
-                                    drop(client_lock);
-                                }
+                                drop(client_lock);
+                                let mut pending = updates.lock().await;
+                                pending.push(TelegramUpdate::NewMessage {
+                                    chat_id,
+                                    _sender_name: sender_name,
+                                    text,
+                                    is_outgoing: false,
+                                });
                             }
-                        }
+                            Update::NewMessage(msg) if msg.outgoing() => {
+                                let chat_id = msg.chat().id();
+                                let text = msg.text().to_string();
+
+                                drop(client_lock);
+                                let mut pending = updates.lock().await;
+                                pending.push(TelegramUpdate::NewMessage {
+                                    chat_id,
+                                    _sender_name: "You".to_string(),
+                                    text,
+                                    is_outgoing: true,
+                                });
+                            }
+                            _ => {
+                                drop(client_lock);
+                            }
+                        },
                         Ok(Err(_e)) => {
                             drop(client_lock);
                             break;

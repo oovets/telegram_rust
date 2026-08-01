@@ -1,5 +1,5 @@
 use anyhow::Result;
-use base64::{engine::general_purpose::STANDARD, Engine as _};
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 use std::fs;
 use std::io::Write;
 
@@ -17,13 +17,7 @@ pub fn clear_all_images() -> Result<()> {
     Ok(())
 }
 
-pub fn render_png_at(
-    path: &str,
-    col: u16,
-    row: u16,
-    cols: u16,
-    rows: u16,
-) -> Result<()> {
+pub fn render_png_at(path: &str, col: u16, row: u16, cols: u16, rows: u16) -> Result<()> {
     let bytes = fs::read(path)?;
     let encoded = STANDARD.encode(bytes);
     let mut stdout = std::io::stdout().lock();

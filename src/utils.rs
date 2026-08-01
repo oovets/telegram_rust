@@ -62,10 +62,7 @@ pub fn send_desktop_notification(title: &str, message: &str) {
             "display notification \"{}\" with title \"{}\"",
             safe_msg, safe_title
         );
-        let _ = Command::new("osascript")
-            .arg("-e")
-            .arg(&script)
-            .output();
+        let _ = Command::new("osascript").arg("-e").arg(&script).output();
     }
 
     #[cfg(target_os = "linux")]
@@ -127,7 +124,10 @@ pub fn try_autocomplete(text: &str) -> (Option<String>, Option<String>) {
         return (None, None);
     }
 
-    let matches: Vec<&&str> = COMMANDS.iter().filter(|cmd| cmd.starts_with(text)).collect();
+    let matches: Vec<&&str> = COMMANDS
+        .iter()
+        .filter(|cmd| cmd.starts_with(text))
+        .collect();
 
     if matches.len() == 1 {
         return (Some(matches[0].to_string()), None);
@@ -176,10 +176,7 @@ mod tests {
             get_user_display_name(None, None, Some("johndoe"), 123),
             "@johndoe"
         );
-        assert_eq!(
-            get_user_display_name(None, None, None, 123),
-            "User 123"
-        );
+        assert_eq!(get_user_display_name(None, None, None, 123), "User 123");
     }
 
     #[test]

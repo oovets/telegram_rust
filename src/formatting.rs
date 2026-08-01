@@ -1,6 +1,7 @@
 use chrono::{DateTime, Local, TimeZone};
 use regex::Regex;
 use std::collections::HashMap;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::widgets::MessageData;
 
@@ -109,6 +110,26 @@ pub fn strip_emojis(text: &str) -> String {
     emoji_regex.replace_all(text, "").to_string()
 }
 
+/// Split a long word into chunks that each fit within `width` (display width)
+fn split_long_word(word: &str, width: usize) -> Vec<String> {
+    let mut chunks = Vec::new();
+    let mut current = String::new();
+    let mut current_w = 0usize;
+    for c in word.chars() {
+        let cw = UnicodeWidthChar::width(c).unwrap_or(1).max(1);
+        if current_w + cw > width && !current.is_empty() {
+            chunks.push(std::mem::take(&mut current));
+            current_w = 0;
+        }
+        current.push(c);
+        current_w += cw;
+    }
+    if !current.is_empty() {
+        chunks.push(current);
+    }
+    chunks
+}
+
 /// Wrap text to fit within a given width, with indent for continuation lines
 pub fn wrap_text(text: &str, indent: usize, width: usize) -> String {
     if width <= indent {
@@ -129,9 +150,9 @@ pub fn wrap_text(text: &str, indent: usize, width: usize) -> String {
         let first_line_of_para = i == 0;
 
         for word in &words {
-            // Handle very long words - use char_count instead of byte len
-            let word_char_count = word.chars().count();
-            if word_char_count > content_width {
+            // Handle very long words - split by display width
+            let word_width = word.width();
+            if word_width > content_width {
                 if !current_line.is_empty() {
                     if first_line_of_para && result_lines.is_empty() {
                         result_lines.push(current_line.clone());
@@ -141,23 +162,12 @@ pub fn wrap_text(text: &str, indent: usize, width: usize) -> String {
                     current_line.clear();
                 }
                 // Split word by character boundaries
-                let char_indices: Vec<(usize, char)> = word.char_indices().collect();
-                let mut char_pos = 0;
-                while char_pos < char_indices.len() {
-                    let chunk_end = (char_pos + content_width).min(char_indices.len());
-                    let byte_start = char_indices[char_pos].0;
-                    let byte_end = if chunk_end < char_indices.len() {
-                        char_indices[chunk_end].0
-                    } else {
-                        word.len()
-                    };
-                    let chunk = &word[byte_start..byte_end];
+                for chunk in split_long_word(word, content_width) {
                     if first_line_of_para && result_lines.is_empty() {
-                        result_lines.push(chunk.to_string());
+                        result_lines.push(chunk);
                     } else {
                         result_lines.push(format!("{}{}", pad, chunk));
                     }
-                    char_pos = chunk_end;
                 }
                 continue;
             }
@@ -168,7 +178,7 @@ pub fn wrap_text(text: &str, indent: usize, width: usize) -> String {
                 format!("{} {}", current_line, word)
             };
 
-            if test_line.chars().count() <= content_width {
+            if test_line.width() <= content_width {
                 current_line = test_line;
             } else {
                 if !current_line.is_empty() {
@@ -229,7 +239,10 @@ pub fn format_messages_for_display(
     // Show filter indicator if active
     if let Some(ft) = filter_type {
         let fv = filter_value.unwrap_or("");
-        lines.push(format!("Filter: {}={} (use /filter off to disable)", ft, fv));
+        lines.push(format!(
+            "Filter: {}={} (use /filter off to disable)",
+            ft, fv
+        ));
         lines.push(String::new());
     }
 
@@ -239,7 +252,40 @@ pub fn format_messages_for_display(
         usize::MAX
     };
 
+    let today = Local::now().date_naive();
+    let mut prev_date: Option<chrono::NaiveDate> = None;
+
     for (idx, data) in msg_data.iter().enumerate() {
+        // Day separator between messages on different dates
+        let date: chrono::NaiveDate = Local
+            .timestamp_opt(data.timestamp, 0)
+            .single()
+            .unwrap_or_else(Local::now)
+            .date_naive();
+        if let Some(prev) = prev_date {
+            if date != prev {
+                let label = if date == today {
+                    "Today".to_string()
+                } else if prev.succ_opt() == Some(date) {
+                    "Yesterday".to_string()
+                } else {
+                    date.format("%Y-%m-%d").to_string()
+                };
+                let label = format!(" {} ", label);
+                let label_width = label.width();
+                let total = width.saturating_sub(1).max(label_width);
+                let dashes = (total - label_width) / 2;
+                let sep = format!(
+                    "{}{}{}",
+                    "-".repeat(dashes),
+                    label,
+                    "-".repeat(total - label_width - dashes)
+                );
+                lines.push(format!("[DAYSEP] {}", sep));
+            }
+        }
+        prev_date = Some(date);
+
         // Show unread marker
         if idx == unread_marker_idx && unread_count > 0 {
             let marker = "-".repeat(width / 2);
@@ -304,7 +350,7 @@ pub fn format_messages_for_display(
                     .get(&original_msg.sender_id)
                     .cloned()
                     .unwrap_or_else(|| original_msg.sender_name.clone());
-                
+
                 let mut rt = original_msg.text.clone();
                 if !show_emojis {
                     rt = strip_emojis(&rt);
@@ -312,7 +358,11 @@ pub fn format_messages_for_display(
                 // Get first line only and truncate if needed
                 let first_line = rt.lines().next().unwrap_or(&rt);
                 let display_text = if first_line.chars().count() > 50 {
-                    let truncate_at = first_line.char_indices().nth(50).map(|(i, _)| i).unwrap_or(first_line.len());
+                    let truncate_at = first_line
+                        .char_indices()
+                        .nth(50)
+                        .map(|(i, _)| i)
+                        .unwrap_or(first_line.len());
                     format!("{}...", &first_line[..truncate_at])
                 } else {
                     first_line.to_string()
@@ -323,18 +373,27 @@ pub fn format_messages_for_display(
                 } else {
                     ""
                 };
-                lines.push(format!("{}  ↳ Reply to {}: {}", reply_marker, reply_sender, display_text));
+                lines.push(format!(
+                    "{}  ↳ Reply to {}: {}",
+                    reply_marker, reply_sender, display_text
+                ));
             } else {
                 // Message not in our loaded history - show minimal info
                 // If we have cached reply info from Telegram, use it
-                if let (Some(reply_sender), Some(reply_text)) = (&data.reply_sender, &data.reply_text) {
+                if let (Some(reply_sender), Some(reply_text)) =
+                    (&data.reply_sender, &data.reply_text)
+                {
                     let mut rt = reply_text.clone();
                     if !show_emojis {
                         rt = strip_emojis(&rt);
                     }
                     let first_line = rt.lines().next().unwrap_or(&rt);
                     let display_text = if first_line.chars().count() > 50 {
-                        let truncate_at = first_line.char_indices().nth(50).map(|(i, _)| i).unwrap_or(first_line.len());
+                        let truncate_at = first_line
+                            .char_indices()
+                            .nth(50)
+                            .map(|(i, _)| i)
+                            .unwrap_or(first_line.len());
                         format!("{}...", &first_line[..truncate_at])
                     } else {
                         first_line.to_string()
@@ -412,14 +471,8 @@ mod tests {
         let url1 = "https://www.youtube.com/watch?v=dQw4w9WgXcQ";
         let url2 = "https://youtu.be/dQw4w9WgXcQ";
 
-        assert_eq!(
-            extract_youtube_id(url1),
-            Some("dQw4w9WgXcQ".to_string())
-        );
-        assert_eq!(
-            extract_youtube_id(url2),
-            Some("dQw4w9WgXcQ".to_string())
-        );
+        assert_eq!(extract_youtube_id(url1), Some("dQw4w9WgXcQ".to_string()));
+        assert_eq!(extract_youtube_id(url2), Some("dQw4w9WgXcQ".to_string()));
     }
 
     #[test]

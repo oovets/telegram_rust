@@ -7,6 +7,66 @@ pub enum FilterType {
     Link,
 }
 
+/// Raw message tuple returned by `TelegramClient::get_messages`
+pub type RawMessage = (
+    i32,
+    i64,
+    String,
+    String,
+    Option<i32>,
+    Option<String>,
+    HashMap<String, u32>,
+);
+
+/// Raw message tuple returned by `TelegramClient::search_messages`
+pub type RawSearchMessage = (i32, i64, String, String, Option<i32>, HashMap<String, u32>);
+
+/// Convert raw messages from the Telegram API into display `MessageData`
+pub fn message_data_from_raw(raw: &[RawMessage], my_user_id: i64) -> Vec<MessageData> {
+    raw.iter()
+        .map(
+            |(msg_id, sender_id, sender_name, text, reply_to_id, media_type, reactions)| {
+                MessageData {
+                    msg_id: *msg_id,
+                    sender_id: *sender_id,
+                    sender_name: sender_name.clone(),
+                    text: text.clone(),
+                    is_outgoing: *sender_id == my_user_id,
+                    timestamp: chrono::Utc::now().timestamp(),
+                    media_type: media_type.clone(),
+                    media_label: None,
+                    reactions: reactions.clone(),
+                    reply_to_msg_id: *reply_to_id,
+                    reply_sender: None,
+                    reply_text: None,
+                }
+            },
+        )
+        .collect()
+}
+
+/// Convert raw search results into display `MessageData`
+pub fn message_data_from_search(raw: &[RawSearchMessage], my_user_id: i64) -> Vec<MessageData> {
+    raw.iter()
+        .map(
+            |(msg_id, sender_id, sender_name, text, reply_to_id, reactions)| MessageData {
+                msg_id: *msg_id,
+                sender_id: *sender_id,
+                sender_name: sender_name.clone(),
+                text: text.clone(),
+                is_outgoing: *sender_id == my_user_id,
+                timestamp: chrono::Utc::now().timestamp(),
+                media_type: None,
+                media_label: None,
+                reactions: reactions.clone(),
+                reply_to_msg_id: *reply_to_id,
+                reply_sender: None,
+                reply_text: None,
+            },
+        )
+        .collect()
+}
+
 /// Represents a single message with all its metadata for display
 #[derive(Clone, Debug)]
 pub struct MessageData {
@@ -15,9 +75,9 @@ pub struct MessageData {
     pub sender_name: String,
     pub text: String,
     pub is_outgoing: bool,
-    pub timestamp: i64,        // Unix timestamp
+    pub timestamp: i64, // Unix timestamp
     pub media_type: Option<String>,
-    pub media_label: Option<String>,  // e.g. "[YouTube: title]"
+    pub media_label: Option<String>, // e.g. "[YouTube: title]"
     pub reactions: HashMap<String, u32>,
     pub reply_to_msg_id: Option<i32>,
     pub reply_sender: Option<String>,
@@ -28,10 +88,10 @@ pub struct ChatPane {
     pub chat_id: Option<i64>,
     pub chat_name: String,
     pub username: Option<String>,
-    pub messages: Vec<String>,         // Formatted display lines
-    pub msg_data: Vec<MessageData>,    // Raw message data for formatting
+    pub messages: Vec<String>,      // Formatted display lines
+    pub msg_data: Vec<MessageData>, // Raw message data for formatting
     pub scroll_offset: usize,
-    pub reply_to_message: Option<i32>,  // Telegram message ID to reply to
+    pub reply_to_message: Option<i32>, // Telegram message ID to reply to
     pub reply_preview: Option<String>, // Text shown in reply preview bar
     pub filter_type: Option<FilterType>,
     pub filter_value: Option<String>,
@@ -41,9 +101,13 @@ pub struct ChatPane {
     pub pinned_message: Option<String>,
     pub _unread_count: u32,
     pub unread_count_at_load: u32,
+    pub loading: bool,
+    pub search_active: bool,
+    pub saved_chat_name: Option<String>,
+    pub saved_msg_data: Option<Vec<MessageData>>,
     pub format_cache: HashMap<FormatCacheKey, Vec<String>>,
-    pub input_buffer: String,          // Per-pane input buffer
-    pub input_cursor: usize,           // Cursor byte position in input_buffer
+    pub input_buffer: String, // Per-pane input buffer
+    pub input_cursor: usize,  // Cursor byte position in input_buffer
 }
 
 #[derive(Hash, Eq, PartialEq, Clone, Debug)]
@@ -78,6 +142,10 @@ impl ChatPane {
             pinned_message: None,
             _unread_count: 0,
             unread_count_at_load: 0,
+            loading: false,
+            search_active: false,
+            saved_chat_name: None,
+            saved_msg_data: None,
             input_buffer: String::new(),
             input_cursor: 0,
             format_cache: HashMap::new(),
@@ -159,21 +227,20 @@ impl ChatPane {
     pub fn _message_matches_filter(&self, data: &MessageData) -> bool {
         match (&self.filter_type, &self.filter_value) {
             (None, _) => true,
-            (Some(FilterType::Sender), Some(value)) => {
-                data.sender_name.to_lowercase().contains(&value.to_lowercase())
-            }
-            (Some(FilterType::Media), Some(value)) => {
-                match value.as_str() {
-                    "photo" => data.media_type.as_deref() == Some("photo"),
-                    "video" => data.media_type.as_deref() == Some("video"),
-                    "audio" => data.media_type.as_deref() == Some("audio"),
-                    "voice" => data.media_type.as_deref() == Some("voice"),
-                    "document" => data.media_type.as_deref() == Some("document"),
-                    "sticker" => data.media_type.as_deref() == Some("sticker"),
-                    "gif" => data.media_type.as_deref() == Some("gif"),
-                    _ => data.media_type.is_some(),
-                }
-            }
+            (Some(FilterType::Sender), Some(value)) => data
+                .sender_name
+                .to_lowercase()
+                .contains(&value.to_lowercase()),
+            (Some(FilterType::Media), Some(value)) => match value.as_str() {
+                "photo" => data.media_type.as_deref() == Some("photo"),
+                "video" => data.media_type.as_deref() == Some("video"),
+                "audio" => data.media_type.as_deref() == Some("audio"),
+                "voice" => data.media_type.as_deref() == Some("voice"),
+                "document" => data.media_type.as_deref() == Some("document"),
+                "sticker" => data.media_type.as_deref() == Some("sticker"),
+                "gif" => data.media_type.as_deref() == Some("gif"),
+                _ => data.media_type.is_some(),
+            },
             (Some(FilterType::Link), _) => {
                 data.text.contains("http://") || data.text.contains("https://")
             }

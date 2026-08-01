@@ -1,6 +1,6 @@
 use ratatui::{
-    layout::{Constraint, Direction, Layout, Rect},
     Frame,
+    layout::{Constraint, Direction, Layout, Rect},
 };
 use serde::{Deserialize, Serialize};
 
@@ -14,7 +14,7 @@ pub enum SplitDirection {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum PaneNode {
-    Single(usize),  // Index into App.panes
+    Single(usize), // Index into App.panes
     Split {
         direction: SplitDirection,
         children: Vec<Box<PaneNode>>,
@@ -37,9 +37,10 @@ impl PaneNode {
     pub fn get_pane_indices(&self) -> Vec<usize> {
         match self {
             PaneNode::Single(idx) => vec![*idx],
-            PaneNode::Split { children, .. } => {
-                children.iter().flat_map(|child| child.get_pane_indices()).collect()
-            }
+            PaneNode::Split { children, .. } => children
+                .iter()
+                .flat_map(|child| child.get_pane_indices())
+                .collect(),
         }
     }
 
@@ -57,12 +58,13 @@ impl PaneNode {
             PaneNode::Single(idx) => *idx == pane_idx,
             PaneNode::Split { children, .. } => {
                 // Check if any child IS the pane we want to remove
-                if let Some(pos) = children.iter().position(|child| {
-                    matches!(**child, PaneNode::Single(idx) if idx == pane_idx)
-                }) {
+                if let Some(pos) = children
+                    .iter()
+                    .position(|child| matches!(**child, PaneNode::Single(idx) if idx == pane_idx))
+                {
                     // Remove this direct child
                     children.remove(pos);
-                    
+
                     // If only one child remains, collapse the split
                     if children.len() == 1 {
                         let child = children.remove(0);
@@ -70,14 +72,14 @@ impl PaneNode {
                     }
                     return true;
                 }
-                
+
                 // Otherwise, recurse into children to find and remove
                 for child in children.iter_mut() {
                     if child.find_and_remove_pane(pane_idx) {
                         return true;
                     }
                 }
-                
+
                 false
             }
         }
@@ -100,7 +102,10 @@ impl PaneNode {
                     render_fn(f, area, pane, is_focused);
                 }
             }
-            PaneNode::Split { direction, children } => {
+            PaneNode::Split {
+                direction,
+                children,
+            } => {
                 if children.is_empty() {
                     return;
                 }
@@ -148,7 +153,7 @@ mod tests {
     fn test_split_single_pane() {
         let mut node = PaneNode::new_single(0);
         node.split(SplitDirection::Vertical, 1);
-        
+
         let indices = node.get_pane_indices();
         assert_eq!(indices, vec![0, 1]);
         assert_eq!(node.count_panes(), 2);
@@ -158,10 +163,10 @@ mod tests {
     fn test_remove_pane() {
         let mut node = PaneNode::new_single(0);
         node.split(SplitDirection::Vertical, 1);
-        
+
         let removed = node.find_and_remove_pane(1);
         assert!(removed);
-        
+
         // Should collapse back to single
         match node {
             PaneNode::Single(idx) => assert_eq!(idx, 0),
@@ -174,10 +179,10 @@ mod tests {
         let mut node = PaneNode::new_single(0);
         node.split(SplitDirection::Vertical, 1);
         node.split(SplitDirection::Horizontal, 2);
-        
+
         let next = node.get_next_pane_idx(0);
         assert_eq!(next, Some(1));
-        
+
         let next = node.get_next_pane_idx(2);
         assert_eq!(next, Some(0)); // Wraps around
     }
